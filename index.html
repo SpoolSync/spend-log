@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; frame-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Spend Log">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#e9eeec" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e161a" media="(prefers-color-scheme: dark)">
+<title>Spend Log</title>
+<style>
+/* Layout idea: one phone-width column. A daily check-in on top, then the month printed as a till receipt, then the working tabs. */
+:root{
+  --paper:#e9eeec; --tape:#fbfcfa; --ink:#14232a; --muted:#566669; --line:#c7d0ce;
+  --accent:#1f4fd8; --accent-ink:#ffffff;
+  --need:#1d7a6b; --want:#a86a12; --impulse:#c2412d;
+  --display:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+  --body:-apple-system,system-ui,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0e161a; --tape:#18242a; --ink:#e6ecea; --muted:#94a4a7; --line:#2d3d43;
+    --accent:#8aa9ff; --accent-ink:#0e161a;
+    --need:#5cc5b1; --want:#e2b35f; --impulse:#f28f7b;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0e161a; --tape:#18242a; --ink:#e6ecea; --muted:#94a4a7; --line:#2d3d43;
+  --accent:#8aa9ff; --accent-ink:#0e161a;
+  --need:#5cc5b1; --want:#e2b35f; --impulse:#f28f7b;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;-webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(64px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));display:flex;flex-direction:column;gap:20px}
+h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:30px;font-weight:700;line-height:1.05}
+h2{font-size:21px;font-weight:700;line-height:1.15}
+h3{font-size:16px;font-weight:700}
+p{margin:0}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.eyebrow{font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.status{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 10px}
+.status.warn{color:var(--impulse);border-color:var(--impulse)}
+
+.btn{border:1px solid var(--ink);background:transparent;border-radius:8px;padding:10px 14px;font-weight:600;cursor:pointer;min-height:44px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.quiet{border-color:var(--line);font-weight:500}
+.btn.danger{border-color:var(--impulse);color:var(--impulse)}
+.btn:disabled{opacity:.5;cursor:default}
+.btnrow{display:flex;gap:10px;flex-wrap:wrap}
+
+/* daily check-in */
+.checkin{border:2px solid var(--ink);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px;background:var(--tape)}
+.week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.day{border:1px solid var(--line);background:transparent;border-radius:8px;padding:6px 0 8px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.day .dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--line)}
+.day.logged .dot{background:var(--need);border-color:var(--need)}
+.day.nospend .dot{border-color:var(--need)}
+.day.missed .dot{border-color:var(--impulse);border-style:dashed}
+.day.today{border-color:var(--ink);color:var(--ink)}
+
+/* the month as a till receipt */
+.tape{position:relative;background:var(--tape);padding:18px 16px 20px;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:14px;display:flex;flex-direction:column;gap:12px;margin-bottom:8px}
+.tape::after{content:"";position:absolute;left:0;right:0;bottom:-7px;height:7px;background:conic-gradient(from -45deg at 50% 100%,var(--tape) 90deg,transparent 0) 0 0/14px 7px repeat-x}
+.tapehead{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tapehead button{border:1px solid var(--line);background:transparent;border-radius:6px;width:40px;height:40px;cursor:pointer;font-size:16px}
+.tapehead span{text-transform:uppercase;letter-spacing:.1em;font-size:13px}
+.total{font-size:40px;font-weight:600;line-height:1;letter-spacing:-.02em;overflow-wrap:anywhere}
+.rule{border:0;border-top:1px dashed var(--line);margin:0}
+.ln{display:flex;align-items:baseline;gap:6px}
+.ln .lead{flex:1;border-bottom:1px dotted var(--line);transform:translateY(-3px);min-width:12px}
+.ln .k{overflow-wrap:anywhere}
+.catrow{display:flex;flex-direction:column;gap:4px}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.callout{font-family:var(--body);font-size:15px;font-weight:600;line-height:1.35}
+.split{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--line)}
+.split i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px}
+.legend b{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.sub{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+
+/* tabs */
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.tab{border:1px solid var(--line);background:transparent;border-radius:999px;padding:8px 14px;white-space:nowrap;cursor:pointer;font-weight:500;min-height:40px}
+.tab[aria-selected="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.count{font-family:var(--mono);font-size:12px;margin-left:4px}
+
+#view{display:flex;flex-direction:column;gap:14px}
+.dayhead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--ink);padding-bottom:4px;margin-top:6px;font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.row{border-bottom:1px solid var(--line);padding:8px 0 10px;display:flex;flex-direction:column;gap:6px}
+.rowmain{all:unset;box-sizing:border-box;display:grid;grid-template-columns:1fr auto;gap:2px 12px;cursor:pointer;width:100%}
+.rowmain:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.what{font-weight:600;overflow-wrap:anywhere}
+.amt{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;text-align:right}
+.meta{grid-column:1/-1;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.05em;border:1px solid var(--line);border-radius:4px;padding:3px 7px;background:transparent;color:var(--muted)}
+button.chip{cursor:pointer;min-height:28px}
+.chip.need{color:var(--need);border-color:var(--need)}
+.chip.want{color:var(--want);border-color:var(--want)}
+.chip.impulse{color:var(--impulse);border-color:var(--impulse)}
+.chip.miss{color:var(--impulse);border-style:dashed;border-color:var(--impulse)}
+.chip.has{color:var(--accent);border-color:var(--accent)}
+.empty{border:1px dashed var(--line);border-radius:10px;padding:18px;color:var(--muted)}
+.panel{background:var(--tape);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px}
+
+/* forms */
+dialog{border:0;border-radius:14px;padding:0;background:var(--tape);color:var(--ink);width:min(560px,calc(100% - 24px));max-height:calc(100% - 24px)}
+dialog::backdrop{background:rgba(8,14,17,.6)}
+.form{padding:18px 16px;display:flex;flex-direction:column;gap:14px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label,.field .lab{font-size:13px;font-weight:600}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+input[type=text],input[type=password],input[type=number],input[type=date],input[type=time],select,textarea{width:100%;border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;min-height:44px;font-size:16px}
+textarea{min-height:120px;font-family:var(--mono);font-size:13px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.seg label{border:1px solid var(--line);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;font-weight:500}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg input:checked+span{font-weight:700}
+.seg label:has(input:checked){border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.seg label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.check{display:flex;gap:8px;align-items:center;font-size:14px}
+.check input{width:20px;height:20px}
+.preview{max-width:100%;max-height:220px;border-radius:8px;border:1px solid var(--line);align-self:flex-start}
+.err{color:var(--impulse);font-size:14px;font-weight:600}
+.note{font-size:13px;color:var(--muted)}
+.bank{font-family:var(--mono);font-size:12px;border:1px dashed var(--line);border-radius:6px;padding:8px;overflow-wrap:anywhere}
+#receiptImg{max-width:100%;display:block;border-radius:8px;cursor:zoom-in}
+#receiptImg.zoom{max-width:none;width:260%;cursor:zoom-out}
+#receiptImg2{max-width:100%;display:block;border-radius:8px;cursor:zoom-in}
+#receiptImg2.zoom{max-width:none;width:260%;cursor:zoom-out}
+#receiptImg2[hidden]{display:none}
+#q{width:100%;border:1px solid var(--line);background:var(--tape);border-radius:8px;padding:10px;min-height:44px;font-size:16px}
+#logList{display:flex;flex-direction:column;gap:14px}
+.choice{position:relative;display:flex;flex-direction:column;gap:4px;text-align:left;border:2px solid var(--ink);border-radius:12px;padding:16px;background:transparent;cursor:pointer;width:100%;font:inherit;color:inherit}
+.choice .ct{font-family:var(--display);font-weight:700;font-size:19px}
+.choice .cd{font-size:14px;color:var(--muted)}
+.choice:has(:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px);z-index:10}
+.toast[hidden]{display:none}
+@media (max-width:400px){.two{grid-template-columns:1fr}.total{font-size:34px}}
+@media (prefers-reduced-motion:no-preference){.bar i,.split i{transition:width .3s ease}}
+[hidden]{display:none!important}
+.items summary{cursor:pointer;color:var(--muted);font-family:var(--mono);font-size:12px;padding:6px 0;text-transform:uppercase;letter-spacing:.05em}
+.items .ln{padding:2px 0}
+#f-items{min-height:96px}
+.lock{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))}
+.lockcard{width:100%;max-width:400px;background:var(--tape);border:2px solid var(--ink);border-radius:14px;padding:22px 18px;display:flex;flex-direction:column;gap:14px}
+.lockcard form{display:flex;flex-direction:column;gap:14px}
+</style>
+</head>
+<body>
+<section class="lock" id="lock">
+  <div class="lockcard">
+    <p class="eyebrow">Spend Log</p>
+    <h1 id="lockTitle">Spend Log</h1>
+    <p class="muted" id="lockSub"></p>
+    <form id="lockForm" novalidate>
+      <div class="field"><label for="l-pass">Passcode</label><input type="password" id="l-pass" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="field" id="l-confirmField" hidden><label for="l-confirm">Repeat passcode</label><input type="password" id="l-confirm" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <p class="err" id="l-err" role="alert" hidden></p>
+      <button type="submit" class="btn primary" id="l-go">Unlock</button>
+    </form>
+    <button type="button" class="btn quiet danger" id="l-erase" hidden>Forgot it? Erase everything and start over</button>
+  </div>
+</section>
+<main class="wrap" id="app" hidden>
+  <header class="top">
+    <div>
+      <p class="eyebrow" id="todayLabel"></p>
+      <h1>Spend Log</h1>
+    </div>
+    <span class="status" id="saveStatus">Encrypted on this phone</span>
+  </header>
+
+  <section class="checkin" id="checkin" aria-label="Daily check-in"></section>
+  <section class="tape" id="tape" aria-label="Month summary"></section>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Sections"></nav>
+  <section id="view"></section>
+</main>
+
+<dialog id="entryDlg" aria-labelledby="entryTitle">
+  <form class="form" id="entryForm" novalidate>
+    <h2 id="entryTitle">Log a purchase</h2>
+    <p class="bank" id="f-bank" hidden></p>
+    <div class="field"><label for="f-what">What did you buy?</label><input type="text" id="f-what" maxlength="120" placeholder="Lunch, phone bill, brake pads" autocomplete="off"></div>
+    <div class="two">
+      <div class="field"><label for="f-amount">How much?</label><input type="number" id="f-amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00"></div>
+      <div class="field"><label for="f-where">Where?</label><input type="text" id="f-where" maxlength="80" placeholder="Store or company" autocomplete="off"></div>
+    </div>
+    <div class="two">
+      <div class="field"><label for="f-date">When?</label><input type="date" id="f-date"></div>
+      <div class="field"><label for="f-time">Time</label><input type="time" id="f-time"></div>
+    </div>
+    <div class="two">
+      <div class="field"><label for="f-cat">Category</label><select id="f-cat"></select></div>
+      <div class="field"><label for="f-pay">Paid with</label><select id="f-pay"></select></div>
+    </div>
+    <div class="field">
+      <span class="lab" id="whyLab">Why?</span>
+      <div class="seg" role="radiogroup" aria-labelledby="whyLab">
+        <label><input type="radio" name="why" id="f-why-need" value="need"><span>Need</span></label>
+        <label><input type="radio" name="why" id="f-why-want" value="want"><span>Want</span></label>
+        <label><input type="radio" name="why" id="f-why-impulse" value="impulse"><span>Impulse</span></label>
+      </div>
+      <input type="text" id="f-note" maxlength="200" placeholder="The reason, in your words" aria-label="Reason in your words" autocomplete="off">
+    </div>
+    <div class="field" id="receiptField">
+      <label for="f-receipt">Receipt or bill</label>
+      <input type="file" id="f-receipt" accept="image/*">
+      <img class="preview" id="f-preview" alt="Receipt preview" hidden>
+      <p class="note" id="f-receiptNote"></p>
+      <label for="f-receipt2">Second photo, for the bottom of a long receipt or its barcode</label>
+      <input type="file" id="f-receipt2" accept="image/*">
+      <p class="note" id="f-receipt2Note"></p>
+      <button type="button" class="btn quiet" id="f-read" hidden>Read this receipt on the phone</button>
+      <label class="check" for="f-noreceipt"><input type="checkbox" id="f-noreceipt"> No receipt for this one</label>
+    </div>
+    <div class="field">
+      <label for="f-items">Items on the receipt, one per line: item ID | name | price</label>
+      <textarea id="f-items" spellcheck="false" autocapitalize="off" placeholder="1342746 | ORANGES | 8.99"></textarea>
+    </div>
+    <div class="field">
+      <label for="f-return">Might return it? Return by</label>
+      <input type="date" id="f-return">
+      <label class="check" for="f-returnAny"><input type="checkbox" id="f-returnAny"> Returnable any time</label>
+      <div class="chips"><button type="button" class="chip" id="f-ret30">30 days</button><button type="button" class="chip" id="f-ret90">90 days</button><button type="button" class="chip" id="f-ret0">Clear</button></div>
+      <p class="note" id="f-returnNote"></p>
+    </div>
+    <p class="err" id="f-err" role="alert" hidden></p>
+    <div class="btnrow">
+      <button type="submit" class="btn primary" id="f-save">Save purchase</button>
+      <button type="button" class="btn quiet" id="f-cancel">Cancel</button>
+      <button type="button" class="btn danger" id="f-delete" hidden>Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="chooseDlg" aria-labelledby="chooseTitle">
+  <div class="form">
+    <h2 id="chooseTitle">Log a purchase</h2>
+    <label class="choice" for="scanFile"><input type="file" id="scanFile" accept="image/*" class="vh"><span class="ct">Scan a receipt</span><span class="cd">Take or pick a photo. The phone reads the store, total and every item from the photo. You check it, then save. The photo is kept.</span></label>
+    <button type="button" class="choice" id="chooseManual"><span class="ct">Enter it myself</span><span class="cd">Type what, how much and why. Add a receipt photo later, or never.</span></button>
+    <div class="btnrow"><button type="button" class="btn quiet" id="chooseCancel">Cancel</button></div>
+  </div>
+</dialog>
+
+<dialog id="billDlg" aria-labelledby="billTitle">
+  <form class="form" id="billForm" novalidate>
+    <h2 id="billTitle">Recurring bill</h2>
+    <div class="field"><label for="b-name">Bill</label><input type="text" id="b-name" maxlength="80" placeholder="Rent, phone, car insurance" autocomplete="off"></div>
+    <div class="two">
+      <div class="field"><label for="b-amount">Usual amount</label><input type="number" id="b-amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00"></div>
+      <div class="field"><label for="b-due">Due on day of month</label><input type="number" id="b-due" inputmode="numeric" min="1" max="31" step="1" placeholder="1 to 31"></div>
+    </div>
+    <div class="field"><label for="b-cat">Category</label><select id="b-cat"></select></div>
+    <p class="err" id="b-err" role="alert" hidden></p>
+    <div class="btnrow">
+      <button type="submit" class="btn primary" id="b-save">Save bill</button>
+      <button type="button" class="btn quiet" id="b-cancel">Cancel</button>
+      <button type="button" class="btn danger" id="b-delete" hidden>Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="receiptDlg" aria-label="Receipt">
+  <div class="form">
+    <p class="note">Tap the photo to zoom in, for example on the barcode.</p>
+    <img id="receiptImg" alt="Saved receipt">
+    <img id="receiptImg2" alt="Second receipt photo" hidden>
+    <div class="btnrow"><button type="button" class="btn quiet" id="receiptClose">Close</button></div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

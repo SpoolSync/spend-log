@@ -161,7 +161,8 @@ textarea{min-height:120px;font-family:var(--mono);font-size:13px}
 @media (prefers-reduced-motion:no-preference){.bar i,.split i{transition:width .3s ease}}
 [hidden]{display:none!important}
 .items summary{cursor:pointer;color:var(--muted);font-family:var(--mono);font-size:12px;padding:6px 0;text-transform:uppercase;letter-spacing:.05em}
-.items .ln{padding:2px 0}
+.items .ln{padding:3px 0;align-items:center}
+.items .ln .chip{margin-left:8px;flex:none}
 #f-items{min-height:96px}
 .lock{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))}
 .lockcard{width:100%;max-width:400px;background:var(--tape);border:2px solid var(--ink);border-radius:14px;padding:22px 18px;display:flex;flex-direction:column;gap:14px}
@@ -236,8 +237,8 @@ textarea{min-height:120px;font-family:var(--mono);font-size:13px}
       <label class="check" for="f-noreceipt"><input type="checkbox" id="f-noreceipt"> No receipt for this one</label>
     </div>
     <div class="field">
-      <label for="f-items">Items on the receipt, one per line: item ID | name | price</label>
-      <textarea id="f-items" spellcheck="false" autocapitalize="off" placeholder="1342746 | ORANGES | 8.99"></textarea>
+      <label for="f-items">Items on the receipt, one per line: item ID | name | price | category</label>
+      <textarea id="f-items" spellcheck="false" autocapitalize="off" placeholder="1342746 | ORANGES | 8.99 | Groceries"></textarea>
     </div>
     <div class="field">
       <label for="f-return">Might return it? Return by</label>
@@ -262,6 +263,24 @@ textarea{min-height:120px;font-family:var(--mono);font-size:13px}
     <button type="button" class="choice" id="chooseManual"><span class="ct">Enter it myself</span><span class="cd">Type what, how much and why. Add a receipt photo later, or never.</span></button>
     <div class="btnrow"><button type="button" class="btn quiet" id="chooseCancel">Cancel</button></div>
   </div>
+</dialog>
+
+<dialog id="retDlg" aria-labelledby="retTitle">
+  <form class="form" id="retForm" novalidate>
+    <h2 id="retTitle">Mark as returned</h2>
+    <p class="bank" id="r-what"></p>
+    <div class="two">
+      <div class="field"><label for="r-amt">Refund you got back</label><input type="number" id="r-amt" inputmode="decimal" step="0.01" min="0"></div>
+      <div class="field"><label for="r-date">Returned on</label><input type="date" id="r-date"></div>
+    </div>
+    <p class="note" id="r-note"></p>
+    <p class="err" id="r-err" role="alert" hidden></p>
+    <div class="btnrow">
+      <button type="submit" class="btn primary" id="r-save">Mark as returned</button>
+      <button type="button" class="btn quiet" id="r-cancel">Cancel</button>
+      <button type="button" class="btn danger" id="r-undo" hidden>Undo this return</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="billDlg" aria-labelledby="billTitle">

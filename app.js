@@ -28,7 +28,7 @@ function today(){return iso(new Date());}
 function ym(s){return s.slice(0,7);}
 var fmt=new Intl.NumberFormat("en-CA",{style:"currency",currency:"CAD"});
 function money(n){return fmt.format(Math.round((n||0)*100)/100).replace("CA","");}
-function sum(a){return a.reduce(function(t,e){return t+(+e.amount||0);},0);}
+function sum(a){return a.reduce(function(t,e){return t+net(e);},0);}
 function monthLabel(m){var p=m.split("-");return new Date(+p[0],+p[1]-1,1).toLocaleDateString("en-CA",{month:"long",year:"numeric"});}
 function shiftMonth(m,by){var p=m.split("-");var d=new Date(+p[0],+p[1]-1+by,1);return d.getFullYear()+"-"+z(d.getMonth()+1);}
 function dayLabel(s){return fromIso(s).toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"});}
@@ -252,9 +252,9 @@ function parseReceiptBoxes(boxes){
   return out;
 }
 
-/* Items are edited as plain lines: item ID | name | price */
+/* Items are edited as plain lines: item ID | name | price | category */
 function itemsToText(items){
-  return (items||[]).map(function(it){return (it.id?it.id+" | ":"")+(it.name||"")+" | "+(+it.cost||0).toFixed(2);}).join("\n");
+  return fillItemCats((items||[]).map(function(it){return Object.assign({},it);})).map(function(it){return (it.id||"-")+" | "+(it.name||"")+" | "+(+it.cost||0).toFixed(2)+(it.cat?" | "+CATNAME[it.cat]:"");}).join("\n");
 }
 function textToItems(text){
   var out=[];
@@ -262,14 +262,14 @@ function textToItems(text){
     var p=line.split("|").map(function(s){return s.trim();});
     if(!line.trim())return;
     var it={id:"",name:"",cost:0};
-    if(p.length>=3){it.id=p[0];it.name=p[1];it.cost=parseAmount(p[2]);}
+    if(p.length>=3){it.id=p[0]==="-"?"":p[0];it.name=p[1];it.cost=parseAmount(p[2]);if(p[3])it.cat=catFromLabel(p[3]);}
     else if(p.length===2){if(isNaN(parseAmount(p[1]))){it.id=p[0];it.name=p[1];}else{it.name=p[0];it.cost=parseAmount(p[1]);}}
     else it.name=p[0];
     if(isNaN(it.cost))it.cost=0;
     it.id=it.id.slice(0,24);it.name=it.name.slice(0,60);it.cost=Math.round(it.cost*100)/100;
     if(it.name||it.id)out.push(it);
   });
-  return out.slice(0,120);
+  return fillItemCats(out.slice(0,120));
 }
 
 /* ---------- render ---------- */
@@ -310,7 +310,7 @@ function renderCheckin(){
   if(!mine.length&&!ns)row.append(h("button",{type:"button",class:"btn quiet",disabled:!S.ready,text:"Nothing spent today",onclick:function(){guard(store.setNoSpend(t,true));}}));
   if(ns&&!mine.length)row.append(h("button",{type:"button",class:"btn quiet",text:"Undo no-spend",onclick:function(){guard(store.setNoSpend(t,false));}}));
   box.append(row);
-  var soon=S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0&&daysLeft(e.returnBy)<=7;});
+  var soon=S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0&&daysLeft(e.returnBy)<=7&&!fullyReturned(e);});
   if(soon.length)box.append(h("button",{type:"button",class:"chip impulse",style:"align-self:flex-start",text:soon.length+(soon.length===1?" return deadline":" return deadlines")+" within 7 days",onclick:function(){S.tab="returns";render();}}));
   if(streak>1)box.append(h("p",{class:"small muted mono",text:streak+" days in a row accounted for"}));
 }
@@ -334,8 +334,9 @@ function renderTape(){
   box.append(ln("Purchases",String(list.length)),ln("Average per day",money(total/daysSoFar)));
   if(prev>0){var diff=total-prev;box.append(ln("Against "+monthLabel(shiftMonth(m,-1)).split(" ")[0],(diff>=0?"+":"−")+money(Math.abs(diff))));}
 
-  var by={};list.forEach(function(e){var k=e.category||"unsorted";by[k]=(by[k]||0)+(+e.amount||0);});
-  var cats=Object.keys(by).map(function(k){return [k,by[k]];}).sort(function(a,b){return b[1]-a[1];});
+  var by=spendByCat(list);
+  var cats=Object.keys(by).map(function(k){return [k,by[k]];}).filter(function(c){return Math.abs(c[1])>=0.005;}).sort(function(a,b){return b[1]-a[1];});
+  if(!cats.length)cats=[["unsorted",0]];
   var topName=CATNAME[cats[0][0]]||"Unsorted",topPct=total?Math.round(cats[0][1]/total*100):0;
   box.append(h("hr",{class:"rule"}),h("p",{class:"callout",text:"Most of your money went to "+topName+": "+money(cats[0][1])+", "+topPct+"% of the month."}));
   cats.forEach(function(c){
@@ -343,7 +344,7 @@ function renderTape(){
     box.append(h("div",{class:"catrow"},ln(CATNAME[c[0]]||"Unsorted",money(c[1])+"  "+Math.round(pct)+"%"),h("div",{class:"bar"},h("i",{style:"width:"+pct.toFixed(1)+"%"}))));
   });
 
-  var why={need:0,want:0,impulse:0,none:0};list.forEach(function(e){why[WHYNAME[e.why]?e.why:"none"]+=(+e.amount||0);});
+  var why={need:0,want:0,impulse:0,none:0};list.forEach(function(e){why[WHYNAME[e.why]?e.why:"none"]+=net(e);});
   var split=h("div",{class:"split",role:"img","aria-label":"Need "+money(why.need)+", want "+money(why.want)+", impulse "+money(why.impulse)});
   [["need","--need"],["want","--want"],["impulse","--impulse"]].forEach(function(w){if(why[w[0]]>0)split.append(h("i",{style:"width:"+(why[w[0]]/total*100).toFixed(1)+"%;background:var("+w[1]+")"}));});
   var legend=h("div",{class:"legend"});
@@ -351,18 +352,21 @@ function renderTape(){
   if(why.none>0)legend.append(h("span",{class:"muted",text:"No reason given "+money(why.none)}));
   box.append(h("hr",{class:"rule"}),h("div",{class:"sub",text:"Need, want or impulse"}),split,legend);
 
-  var places={};list.forEach(function(e){var k=(e.where||"").trim();if(k)places[k]=(places[k]||0)+(+e.amount||0);});
+  var places={};list.forEach(function(e){var k=(e.where||"").trim();if(k)places[k]=(places[k]||0)+net(e);});
   var tops=Object.keys(places).map(function(k){return [k,places[k]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,3);
   if(tops.length){box.append(h("hr",{class:"rule"}),h("div",{class:"sub",text:"Where it went"}));tops.forEach(function(t){box.append(ln(t[0],money(t[1])));});}
   var miss=list.filter(receiptMissing).length;
-  box.append(h("hr",{class:"rule"}),ln("Receipts missing",String(miss)));
+  box.append(h("hr",{class:"rule"}));
+  var backSum=list.reduce(function(t,e){return t+refunded(e);},0);
+  if(backSum>0)box.append(ln("Returned and refunded","−"+money(backSum)));
+  box.append(ln("Receipts missing",String(miss)));
 }
 function ln(k,v){return h("div",{class:"ln"},h("span",{class:"k",text:k}),h("span",{class:"lead"}),h("span",{text:v}));}
 
 function renderTabs(){
   var nav=$("tabs");nav.textContent="";
   var need=S.entries.filter(function(e){return e.needsDetails;}).length;
-  var ret=S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0;}).length;
+  var ret=S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0&&!fullyReturned(e);}).length;
   [["log","Purchases",0],["inbox","Needs details",need],["returns","Returns",ret],["bills","Bills",0],["import","Bank import",0],["settings","Lock & backup",0]].forEach(function(t){
     nav.append(h("button",{type:"button",class:"tab",role:"tab","aria-selected":S.tab===t[0]?"true":"false",onclick:function(){S.tab=t[0];render();}},t[1],t[2]?h("span",{class:"count",text:"("+t[2]+")"}):null));
   });
@@ -377,8 +381,12 @@ function entryRow(e){
   if(e.note)metaBits.push("“"+e.note+"”");
   var chips=h("div",{class:"chips"});
   if(WHYNAME[e.why])chips.append(h("span",{class:"chip "+e.why,text:WHYNAME[e.why]}));
-  if(e.returnAny)chips.append(h("span",{class:"chip need",text:"Returnable any time"}));
-  if(e.returnBy){var dl=daysLeft(e.returnBy);chips.append(h("span",{class:"chip "+(dl<0?"":dl<=7?"impulse":"need"),text:dl<0?"Return window closed":"Return by "+dayLabel(e.returnBy)+" · "+dl+(dl===1?" day left":" days left")}));}
+  var back=refunded(e),gone=fullyReturned(e),canReturn=!gone&&(e.returnAny||(e.returnBy&&daysLeft(e.returnBy)>=0));
+  if(back>0)chips.append(h("span",{class:"chip need",text:(gone?"Returned":"Part returned")+" · "+money(back)+" back"}));
+  if(e.ret)chips.append(h("button",{type:"button",class:"chip",text:"Change return",onclick:function(){openReturn(e,-1);}}));
+  if(canReturn)chips.append(h("button",{type:"button",class:"chip has",text:(e.items&&e.items.length)?"Return everything":"Mark as returned",onclick:function(){openReturn(e,-1);}}));
+  if(!gone&&e.returnAny)chips.append(h("span",{class:"chip need",text:"Returnable any time"}));
+  if(!gone&&e.returnBy){var dl=daysLeft(e.returnBy);chips.append(h("span",{class:"chip "+(dl<0?"":dl<=7?"impulse":"need"),text:dl<0?"Return window closed":"Return by "+dayLabel(e.returnBy)+" · "+dl+(dl===1?" day left":" days left")}));}
   if(e.scanned)chips.append(h("button",{type:"button",class:"chip want",text:"Scanned: check it",onclick:function(){openEntry(e);}}));
   if(e.needsDetails)chips.append(h("button",{type:"button",class:"chip miss",text:"Add details",onclick:function(){openEntry(e);}}));
   if(e.receiptId){
@@ -387,15 +395,15 @@ function entryRow(e){
   else chips.append(h("button",{type:"button",class:"chip miss",text:"Receipt missing",onclick:function(){openEntry(e);}}));
   return h("div",{class:"row"},
     h("button",{type:"button",class:"rowmain","aria-label":"Edit "+title(e),onclick:function(){openEntry(e);}},
-      h("span",{class:"what",text:title(e)}),h("span",{class:"amt",text:money(e.amount)}),
+      h("span",{class:"what",text:title(e)}),h("span",{class:"amt",text:money(net(e))}),
       metaBits.length?h("span",{class:"meta",text:metaBits.join(" · ")}):null),
     chips,itemsBlock(e));
 }
 function itemsBlock(e){
   if(!Array.isArray(e.items)||!e.items.length)return null;
   var d=h("details",{class:"items",open:!!(S.q&&S.q.trim())},h("summary",{text:e.items.length+(e.items.length===1?" line":" lines")+" from the receipt"}));
-  e.items.forEach(function(it){var c=+it.cost||0;
-    d.append(h("div",{class:"ln mono small"},h("span",{class:"k",text:(it.id?it.id+"  ":"")+(it.name||"Item")}),h("span",{class:"lead"}),h("span",{text:(c<0?"−":"")+money(Math.abs(c))})));});
+  e.items.forEach(function(it,k){var c=+it.cost||0;
+    d.append(h("div",{class:"ln mono small"},h("span",{class:"k",text:(it.id?it.id+"  ":"")+(it.name||"Item")+(it.cat?"  ·  "+CATNAME[it.cat]:"")}),h("span",{class:"lead"}),h("span",{text:(c<0?"−":"")+money(Math.abs(c))}),retBtn(e,it,k)));});
   return d;
 }
 
@@ -435,11 +443,11 @@ function fillLog(v){
     v.append(entryRow(e));
   });
   var btn=h("button",{type:"button",class:"btn quiet",text:q?"Copy these matches as CSV":"Copy this month as CSV",onclick:function(){
-    var rows=[["date","time","what","where","entry_total","category","paid_with","why","reason","receipt","return_by","item_id","item_name","item_cost"]];
+    var rows=[["date","time","what","where","entry_total","category","paid_with","why","reason","receipt","return_by","item_id","item_name","item_cost","item_category","returned_on","refund"]];
     list.forEach(function(e){
       var base=[e.date,e.time||"",e.what||"",e.where||"",(+e.amount||0).toFixed(2),CATNAME[e.category]||"",e.pay||"",WHYNAME[e.why]||"",e.note||"",e.receiptId?"attached":e.noReceipt?"none":"missing",e.returnAny?"any time":(e.returnBy||"")];
-      if(Array.isArray(e.items)&&e.items.length)e.items.forEach(function(it){rows.push(base.concat([it.id||"",it.name||"",(+it.cost||0).toFixed(2)]));});
-      else rows.push(base.concat(["","",""]));
+      if(Array.isArray(e.items)&&e.items.length)e.items.forEach(function(it){rows.push(base.concat([it.id||"",it.name||"",(+it.cost||0).toFixed(2),CATNAME[it.cat]||"",it.ret?it.ret.d:"",it.ret?(+it.ret.amt).toFixed(2):""]));});
+      else rows.push(base.concat(["","","","",e.ret?e.ret.d:"",e.ret?(+e.ret.amt).toFixed(2):""]));
     });
     var csv=rows.map(function(r){return r.map(function(c){c=String(c);return /[",\n]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c;}).join(",");}).join("\n");
     try{navigator.clipboard.writeText(csv).then(function(){btn.textContent="Copied";},function(){toast("Copying was blocked in this view.");});}catch(e){toast("Copying was blocked in this view.");}
@@ -481,6 +489,7 @@ function viewBills(v){
         h("span",{class:"meta",text:"Due on day "+(b.dueDay||1)+" · "+(CATNAME[b.category]||"Other")})),chips));
   });
   v.append(h("div",{class:"btnrow"},h("button",{type:"button",class:"btn",disabled:!S.ready,text:"Add a bill",onclick:function(){openBill(null);}})));
+  if(S.bills.length)v.append(calBtn("Add bill due dates to my calendar",billEvents()));
 }
 
 /* ---------- bank import ---------- */
@@ -713,7 +722,7 @@ $("entryForm").addEventListener("submit",async function(ev){
   if(!e.source)e.source="manual";
   e.scanned=!!scanSaved;scanSaved=false;
   var bill=$("entryDlg").dataset.bill;if(bill)e.billId=bill;
-  e.items=textToItems($("f-items").value);
+  e.items=textToItems($("f-items").value);keepReturns(e.items,editing&&editing.items);
   if(pendingReceipt){
     pendingReceipt.total=e.amount;e.receipt=pendingReceipt;
     var dup=findDuplicate(pendingReceipt,e.items,date,editing&&editing.id);
@@ -785,12 +794,14 @@ function matches(e,q){
   return q.split(/\s+/).every(function(w){return hay.indexOf(w)>=0;});
 }
 function viewReturns(v){
-  var list=S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0;}).sort(function(a,b){return a.returnBy.localeCompare(b.returnBy);});
+  var list=S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0&&!fullyReturned(e);}).sort(function(a,b){return a.returnBy.localeCompare(b.returnBy);});
   v.append(h("h2",{text:"Still returnable"}));
-  var anyList=S.entries.filter(function(e){return e.returnAny;}).slice(0,30);
-  if(!list.length&&!anyList.length){v.append(h("p",{class:"empty",text:"Nothing with an open return window. When you log something you might take back, set its return-by date and it stays here until the deadline passes."}));return;}
+  var anyList=S.entries.filter(function(e){return e.returnAny&&!fullyReturned(e);}).slice(0,30),backList=S.entries.filter(function(e){return refunded(e)>0;}).slice(0,30);
+  if(!list.length&&!anyList.length&&!backList.length){v.append(h("p",{class:"empty",text:"Nothing with an open return window. When you log something you might take back, set its return-by date and it stays here until the deadline passes."}));return;}
   list.forEach(function(e){v.append(h("div",{class:"dayhead"},h("span",{text:"Return by "+dayLabel(e.returnBy)}),h("span",{text:money(e.amount)})));v.append(entryRow(e));});
+  if(list.length)v.append(calBtn("Add these deadlines to my calendar",returnEvents(list)));
   if(anyList.length){v.append(h("h2",{text:"Returnable any time"}));anyList.forEach(function(e){v.append(entryRow(e));});}
+  if(backList.length){v.append(h("h2",{text:"Returned"}));backList.forEach(function(e){v.append(entryRow(e));});}
 }
 function setReturn(n){var d=fromIso(parseDate($("f-date").value)||today());d.setDate(d.getDate()+n);$("f-return").value=iso(d);}
 $("f-ret30").addEventListener("click",function(){setReturn(30);});
@@ -838,7 +849,7 @@ function suggestReturn(){
   if(returnTouched)return;
   var its=(typeof pendingItems!=="undefined"&&pendingItems)||(editing&&editing.items)||[];
   var text=$("f-what").value+" "+its.map(function(i){return i.name||"";}).join(" ");
-  var p=policyFor($("f-where").value,$("f-cat").value,text,$("f-date").value),note=$("f-returnNote");
+  var p=policyFor($("f-where").value,returnCat(),text,$("f-date").value),note=$("f-returnNote");
   if(!p){if(returnAuto){$("f-return").value="";$("f-returnAny").checked=false;returnAuto=false;note.textContent="";}return;}
   $("f-returnAny").checked=!!p.any;$("f-return").value=p.by||"";returnAuto=!p.none;
   note.textContent=p.none?p.name+": "+p.desc+".":"Auto-filled from "+p.name+"'s usual policy ("+p.desc+"). Edit it if your receipt says otherwise.";
@@ -874,6 +885,226 @@ $("scanFile").addEventListener("change",async function(){
   }
 });
 
+/* ---------- per-item categories ---------- */
+function guessItemCat(name){
+  var n=(name||"").toLowerCase();
+  if(/fries|gravy|hot ?dog|pizza|burger|poutine|combo|latte|coffee|sandwich|sundae|smoothie|chicken bake|\bwrap\b/.test(n))return "eating";
+  if(/\bgas\b|fuel|unleaded|diesel|washer fluid|motor oil/.test(n))return "transport";
+  if(/polo|jean|pullover|yoga|shirt|\btee\b|sock|jacket|hoodie|sweater|\bpants?\b|shorts|shoe|boot|legging|underwear|glove|\bhat\b|towel|blanket|pillow|\btoy|lego|\bbook|batter(y|ies)|charger|cable|\btv\b|laptop|headphone|\blamp|candle|\bpan\b|knife/.test(n))return "shopping";
+  if(/vitamin|tylenol|advil|ibuprofen|bandage|toothpaste|shampoo|\bsoap|lotion|deodorant|razor|sunscreen|allergy/.test(n))return "health";
+  if(/mango|orange|pear|apple|banana|berr(y|ies)|grape|lemon|lime|avocado|tomato|marzano|potato|onion|garlic|spinach|\bspin\b|lettuce|kale|carrot|pepper|cucumber|broccoli|organic|milk|cheese|paneer|yogurt|butter|\beggs?\b|bread|pita|\brice\b|flour|sugar|\boil\b|pasta|noodle|chicken|beef|pork|salmon|\bfish|shrimp|coke|pepsi|juice|water|watr|soda|chips|cookie|chocolate|cereal|\boats|\bnuts|almond|salsa|sauce|soup|beans|lentil|\bdal\b|masala|\btea\b/.test(n))return "groceries";
+  return "";
+}
+function catFromLabel(s){
+  s=(s||"").trim().toLowerCase();if(!s)return "";
+  for(var i=0;i<CATS.length;i++)if(CATS[i][0]===s||CATS[i][1].toLowerCase()===s)return CATS[i][0];
+  for(i=0;i<CATS.length;i++)if(CATS[i][1].toLowerCase().indexOf(s)===0)return CATS[i][0];
+  return "";
+}
+/* Fill in a category for each line. A discount line takes the category of the item it refers to, or the line above it. */
+function fillItemCats(items){
+  items.forEach(function(it,k){
+    if(it.cat)return;
+    var isDisc=it.cost<0||(it.name||"").charAt(0)==="/";
+    if(!isDisc){it.cat=guessItemCat(it.name);return;}
+    var ref=((it.name||"").match(/\d{4,}/)||[])[0],hit=ref&&items.filter(function(x){return x.id===ref;})[0];
+    it.cat=(hit&&(hit.cat||guessItemCat(hit.name)))||(k>0?items[k-1].cat:"")||"";
+  });
+  return items;
+}
+/* Spending per category for a list of purchases. A receipt with categorised lines is split across them, tax shared in proportion. */
+function spendByCat(list){
+  var by={};
+  list.forEach(function(e){
+    var amt=+e.amount||0,its=Array.isArray(e.items)?e.items:[],s=its.reduce(function(t,i){return t+(+i.cost||0);},0);
+    if(its.length&&s>0&&its.some(function(i){return i.cat;})){
+      its.forEach(function(i){var k=i.cat||e.category||"unsorted";by[k]=(by[k]||0)+(+i.cost||0)/s*amt-(i.ret?(+i.ret.amt||0):0);});
+    }else{var k=e.category||"unsorted";by[k]=(by[k]||0)+net(e);}
+  });
+  return by;
+}
+function returnCat(){
+  var c=$("f-cat").value,its=textToItems($("f-items").value);
+  if(RETURN_CATS.indexOf(c)>=0)return c;
+  return its.some(function(i){return i.cat&&RETURN_CATS.indexOf(i.cat)>0;})?"shopping":c;
+}
+
+/* ---------- sharing a file out of the app ---------- */
+async function shareOrDownload(blob,name){
+  try{
+    var f=new File([blob],name,{type:blob.type});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:name});return;}
+  }catch(e){if(e&&e.name==="AbortError")return;}
+  var url=URL.createObjectURL(blob),a=h("a",{href:url,download:name});
+  document.body.append(a);a.click();a.remove();
+  setTimeout(function(){URL.revokeObjectURL(url);},60000);
+}
+
+/* ---------- full backup: everything including receipt photos, encrypted with a backup password ---------- */
+var BACKUP_MAGIC="SPENDLOG-BACKUP-1\n",lockedBackup=null;
+function fullBackupUI(){
+  var msg=h("p",{class:"err",role:"alert",hidden:true});
+  var btn=h("button",{type:"button",class:"btn",text:"Save full backup with photos",onclick:async function(){
+    var p=$("s-bpass").value;
+    if(p.length<6){msg.textContent="Choose a backup password of at least 6 characters.";msg.hidden=false;return;}
+    msg.hidden=true;btn.disabled=true;btn.textContent="Packing the backup…";
+    try{await saveFullBackup(p);$("s-bpass").value="";}
+    catch(e){msg.textContent="The backup couldn't be made. If you have many photos, free up memory by closing other apps and try again.";msg.hidden=false;}
+    btn.disabled=false;btn.textContent="Save full backup with photos";
+  }});
+  return h("div",{class:"field"},
+    h("p",{class:"small muted",text:"Full backup: every purchase, bill and receipt photo in one file, encrypted with a password you choose here. It can be different from your passcode. Without that password the file can't be opened by anyone, including you."}),
+    pwField("s-bpass","Backup password","new-password"),msg,h("div",{class:"btnrow"},btn));
+}
+async function saveFullBackup(pass){
+  var ids=await recKeys(),metas=[],parts=[],off=0,i;
+  for(i=0;i<ids.length;i++){
+    var rec=await recGet(ids[i]);if(!rec)continue;
+    var bytes=await unseal(DEK,rec);
+    metas.push({id:ids[i],type:rec.type||"image/jpeg",off:off,len:bytes.length});parts.push(bytes);off+=bytes.length;
+  }
+  var meta=new TextEncoder().encode(JSON.stringify({app:"spendlog",v:2,exportedAt:new Date().toISOString(),entries:S.entries,bills:S.bills,days:S.days,receipts:metas}));
+  var plain=new Uint8Array(4+meta.length+off);new DataView(plain.buffer).setUint32(0,meta.length);
+  plain.set(meta,4);var at=4+meta.length;parts.forEach(function(b){plain.set(b,at);at+=b.length;});
+  var salt=rnd(16),box=await seal(await kek(pass,salt,ITER),plain);
+  await shareOrDownload(new Blob([new TextEncoder().encode(BACKUP_MAGIC),salt,box.iv,box.ct],{type:"application/octet-stream"}),"spend-log-full-backup-"+today()+".spendlog");
+}
+async function openBackupFile(f){
+  var buf=new Uint8Array(await f.arrayBuffer()),m=new TextEncoder().encode(BACKUP_MAGIC),isFull=buf.length>m.length+28;
+  for(var i=0;isFull&&i<m.length;i++)if(buf[i]!==m[i])isFull=false;
+  if(isFull){lockedBackup=buf.slice(m.length);pendingRestore=null;render();return;}
+  var d=JSON.parse(new TextDecoder().decode(buf));
+  if(!d||d.app!=="spendlog"||!Array.isArray(d.entries))throw new Error("bad");
+  lockedBackup=null;pendingRestore=d;render();
+}
+function unlockBackupUI(){
+  var msg=h("p",{class:"err",role:"alert",hidden:true});
+  var btn=h("button",{type:"button",class:"btn",text:"Open this backup",onclick:async function(){
+    btn.disabled=true;btn.textContent="Opening…";
+    try{
+      var b=lockedBackup,plain=await unseal(await kek($("s-upass").value,b.slice(0,16),ITER),{iv:b.slice(16,28),ct:b.slice(28)});
+      var n=new DataView(plain.buffer,plain.byteOffset).getUint32(0),d=JSON.parse(new TextDecoder().decode(plain.slice(4,4+n))),body=plain.subarray(4+n);
+      if(!d||d.app!=="spendlog"||!Array.isArray(d.entries))throw new Error("bad");
+      d.receipts=(d.receipts||[]).map(function(r){return {id:r.id,type:r.type,bytes:body.slice(r.off,r.off+r.len)};});
+      lockedBackup=null;pendingRestore=d;render();
+    }catch(e){msg.textContent="That password doesn't open this backup.";msg.hidden=false;btn.disabled=false;btn.textContent="Open this backup";}
+  }});
+  return h("div",{class:"field"},h("p",{class:"small",style:"font-weight:600",text:"This is a full backup. Enter its backup password."}),pwField("s-upass","Backup password","current-password"),msg,
+    h("div",{class:"btnrow"},btn,h("button",{type:"button",class:"btn quiet",text:"Cancel",onclick:function(){lockedBackup=null;render();}})));
+}
+async function restoreReceipts(d){
+  if(!d.receipts)return;
+  for(var i=0;i<d.receipts.length;i++){var r=d.receipts[i],box=await seal(DEK,r.bytes);await recSet(r.id,{iv:box.iv,ct:box.ct,type:r.type});}
+}
+
+/* ---------- calendar reminders (.ics file the phone's calendar can import) ---------- */
+function icsText(s){return String(s||"").replace(/\\/g,"\\\\").replace(/[,;]/g,function(c){return "\\"+c;}).replace(/\r?\n/g,"\\n");}
+function icsDay(s){return s.replace(/-/g,"");}
+function nextDay(s){var d=fromIso(s);d.setDate(d.getDate()+1);return iso(d);}
+function makeIcs(events){
+  var stamp=new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d+/,""),L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Spend Log//EN","CALSCALE:GREGORIAN"];
+  events.forEach(function(ev){
+    L.push("BEGIN:VEVENT","UID:"+ev.uid+"@spend-log","DTSTAMP:"+stamp,"DTSTART;VALUE=DATE:"+icsDay(ev.date),"DTEND;VALUE=DATE:"+icsDay(nextDay(ev.date)),"SUMMARY:"+icsText(ev.summary));
+    if(ev.desc)L.push("DESCRIPTION:"+icsText(ev.desc));
+    if(ev.rrule)L.push("RRULE:"+ev.rrule);
+    L.push("TRANSP:TRANSPARENT","BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+icsText(ev.summary),"TRIGGER:-P"+(ev.alarmDays||1)+"D","END:VALARM","END:VEVENT");
+  });
+  L.push("END:VCALENDAR");return L.join("\r\n")+"\r\n";
+}
+function returnEvents(list){
+  return list.map(function(e){return {uid:"return-"+e.id,date:e.returnBy,summary:"Last day to return: "+title(e),desc:(e.where?e.where+". ":"")+"Paid "+money(e.amount)+" on "+dayLabel(e.date)+". The receipt is in Spend Log.",alarmDays:2};});
+}
+function billEvents(){
+  var t=new Date();
+  return S.bills.map(function(b){
+    var day=Math.min(b.dueDay||1,28),d=new Date(t.getFullYear(),t.getMonth(),day);if(iso(d)<today())d=new Date(t.getFullYear(),t.getMonth()+1,day);
+    return {uid:"bill-"+b.id,date:iso(d),summary:b.name+" due ("+money(b.amount)+")",rrule:(b.dueDay||1)>28?"FREQ=MONTHLY;BYMONTHDAY=-1":"FREQ=MONTHLY;BYMONTHDAY="+day,alarmDays:1,
+      date2:null};
+  }).map(function(ev,k){var b=S.bills[k];if((b.dueDay||1)>28){var n=new Date(t.getFullYear(),t.getMonth()+1,0);if(iso(n)<today())n=new Date(t.getFullYear(),t.getMonth()+2,0);ev.date=iso(n);}delete ev.date2;return ev;});
+}
+function calBtn(label,events){
+  return h("div",{class:"btnrow"},h("button",{type:"button",class:"btn quiet",text:label,onclick:function(){
+    shareOrDownload(new Blob([makeIcs(events)],{type:"text/calendar"}),"spend-log-reminders.ics");
+  }}));
+}
+
+/* ---------- returns and refunds ---------- */
+function refunded(e){
+  var t=e.ret?(+e.ret.amt||0):0;
+  (e.items||[]).forEach(function(i){if(i.ret)t+=(+i.ret.amt||0);});
+  return Math.round(t*100)/100;
+}
+function net(e){return Math.round(((+e.amount||0)-refunded(e))*100)/100;}
+function fullyReturned(e){
+  if(e.ret)return true;
+  var its=(e.items||[]).filter(function(i){return (+i.cost||0)>0;});
+  return its.length>0&&its.every(function(i){return i.ret;});
+}
+/* Suggested refund for one line: its price, less any discount line that points at it, plus its share of the tax. */
+function itemShare(e,k){
+  var its=e.items,it=its[k],s=its.reduce(function(t,i){return t+(+i.cost||0);},0),base=+it.cost||0;
+  its.forEach(function(x){if((+x.cost||0)<0&&it.id&&(x.name||"").indexOf(it.id)>=0)base+=(+x.cost||0);});
+  return s>0?Math.round(base/s*(+e.amount||0)*100)/100:Math.round(base*100)/100;
+}
+function keepReturns(items,old){
+  (old||[]).forEach(function(o){
+    if(!o.ret)return;
+    var m=items.filter(function(i){return !i.ret&&((o.id&&i.id===o.id)||(!o.id&&i.name===o.name));})[0];
+    if(m)m.ret=o.ret;
+  });
+}
+function retBtn(e,it,k){
+  if(it.ret)return h("button",{type:"button",class:"chip need",text:"Returned −"+money(it.ret.amt),"aria-label":"Returned "+(it.name||"item")+". Change or undo.",onclick:function(){openReturn(e,k);}});
+  if((+it.cost||0)>0)return h("button",{type:"button",class:"chip","aria-label":"Mark "+(it.name||"item")+" as returned",text:"Return",onclick:function(){openReturn(e,k);}});
+  return null;
+}
+var retCtx=null;
+function openReturn(e,k){
+  if(!DEK)return;
+  retCtx={id:e.id,k:k};
+  var hasItems=Array.isArray(e.items)&&e.items.length>0,it=k>=0?e.items[k]:null,cur=it?it.ret:e.ret;
+  $("retTitle").textContent=cur?"Returned":"Mark as returned";
+  $("r-what").textContent=it?(it.id?it.id+"  ":"")+(it.name||"Item")+", from "+title(e):(hasItems?"Everything still unreturned on this receipt: ":"")+title(e);
+  $("r-amt").value=(cur?+cur.amt:(it?itemShare(e,k):net(e))).toFixed(2);
+  $("r-date").value=cur?cur.d:today();
+  $("r-note").textContent=it?"The refund is pre-filled with the item's price, less its discount, plus its share of the tax. Change it to what the store gave back.":"The refund is pre-filled with what you paid. Change it to what the store gave back.";
+  $("r-err").hidden=true;$("r-undo").hidden=!cur;$("r-save").disabled=false;$("r-save").textContent=cur?"Save changes":"Mark as returned";
+  $("retDlg").showModal();
+}
+async function saveReturn(undo){
+  var e=S.entries.filter(function(x){return x.id===retCtx.id;})[0],err=$("r-err");if(!e)return;
+  var c=clean(e),k=retCtx.k,amt=Math.round(parseFloat($("r-amt").value)*100)/100,d=$("r-date").value,hasItems=Array.isArray(c.items)&&c.items.length>0;
+  if(!undo){
+    var room=(+e.amount||0)-refunded(e)+(k>=0&&e.items[k].ret?+e.items[k].ret.amt:0)+(k<0&&e.ret?+e.ret.amt:0);
+    var bad=!(amt>=0)?"Enter the refund amount.":amt>room+0.005?"That is more than you paid. The most this can be is "+money(room)+".":!parseDate(d)?"Pick the date you returned it.":d>today()?"That date is in the future.":"";
+    if(bad){err.textContent=bad;err.hidden=false;return;}
+  }
+  if(k>=0){if(undo)delete c.items[k].ret;else c.items[k].ret={d:d,amt:amt};}
+  else if(hasItems){
+    /* Spread the refund so every category ends at what was really kept: each category's remaining spend
+       (its lines' share of the bill, discounts included, less earlier refunds) goes to its unreturned items. */
+    var sAll=c.items.reduce(function(t,i){return t+(+i.cost||0);},0),rem={},pool={},idx=[],first=null,left=net(e);
+    var catOf=function(i){return i.cat||c.category||"unsorted";};
+    c.items.forEach(function(i,j){
+      var kc=catOf(i);rem[kc]=(rem[kc]||0)+(sAll>0?(+i.cost||0)/sAll*(+c.amount||0):0)-(i.ret?(+i.ret.amt||0):0);
+      if((+i.cost||0)>0&&!i.ret){idx.push(j);pool[kc]=(pool[kc]||0)+(+i.cost||0);if(first==null)first=kc;}
+    });
+    Object.keys(rem).forEach(function(kc){if(!pool[kc]&&first!=null){rem[first]=(rem[first]||0)+rem[kc];rem[kc]=0;}});
+    var scale=left>0?amt/left:0,given=0;
+    idx.forEach(function(j,n){
+      var i=c.items[j],kc=catOf(i),v=Math.round(rem[kc]*scale*(+i.cost||0)/pool[kc]*100)/100;
+      if(n===idx.length-1)v=Math.round((amt-given)*100)/100;
+      given+=v;i.ret={d:d,amt:v};
+    });
+  }else{if(undo)delete c.ret;else c.ret={d:d,amt:amt};}
+  $("r-save").disabled=true;
+  try{await store.saveEntry(c);$("retDlg").close();toast(undo?"Return undone.":"Marked as returned. "+money(amt)+" taken off your spending.");}
+  catch(x){err.textContent=saveErr(x);err.hidden=false;$("r-save").disabled=false;}
+}
+$("retForm").addEventListener("submit",function(ev){ev.preventDefault();saveReturn(false);});
+$("r-undo").addEventListener("click",function(){saveReturn(true);});
+$("r-cancel").addEventListener("click",function(){$("retDlg").close();});
+
 /* ---------- lock, backup, settings ---------- */
 var lockMode="unlock",eraseArmed=false,pendingRestore=null,settingsEraseArmed=false;
 function pwField(id,label,auto){return h("div",{class:"field"},h("label",{for:id,text:label}),h("input",{type:"password",id:id,autocomplete:auto,autocapitalize:"off",autocorrect:"off",spellcheck:"false"}));}
@@ -894,21 +1125,20 @@ function viewSettings(v){
   }});
   v.append(h("div",{class:"panel"},h("h3",{text:"Passcode"}),pwField("s-cur","Current passcode","current-password"),pwField("s-new","New passcode","new-password"),pwField("s-conf","Repeat new passcode","new-password"),msg,h("div",{class:"btnrow"},change)));
 
-  var file=h("input",{type:"file",id:"s-restore",accept:".json,application/json","aria-label":"Backup file to restore"});
+  var file=h("input",{type:"file",id:"s-restore",accept:".json,.spendlog,application/json,application/octet-stream","aria-label":"Backup file to restore"});
   file.addEventListener("change",function(){
     var f=file.files&&file.files[0];if(!f)return;
-    f.text().then(function(t){
-      var d=JSON.parse(t);
-      if(!d||d.app!=="spendlog"||!Array.isArray(d.entries))throw new Error("bad");
-      pendingRestore=d;render();
-    }).catch(function(){toast("That isn't a Spend Log backup file.");file.value="";});
+    openBackupFile(f).catch(function(){toast("That isn't a Spend Log backup file.");file.value="";});
   });
   var backup=h("div",{class:"panel"},h("h3",{text:"Backup"}),
-    h("p",{class:"small muted",text:"A forgotten passcode can't be recovered, and a lost phone takes the data with it. A backup file is the only way back. The file is not encrypted and leaves out receipt photos, so keep it somewhere private."}),
-    h("div",{class:"btnrow"},h("button",{type:"button",class:"btn",text:"Save a backup file",onclick:saveBackup})),
+    h("p",{class:"small muted",text:"A forgotten passcode can't be recovered, and a lost phone takes the data with it. A backup file is the only way back. Save one to iCloud Drive or email it to yourself."}),
+    fullBackupUI(),
+    h("p",{class:"small muted",text:"Quick backup: purchases and bills only, no photos, not encrypted. Keep it somewhere private."}),
+    h("div",{class:"btnrow"},h("button",{type:"button",class:"btn quiet",text:"Save a quick backup",onclick:saveBackup})),
     h("div",{class:"field"},h("label",{for:"s-restore",text:"Restore from a backup file"}),file));
+  if(lockedBackup)backup.append(unlockBackupUI());
   if(pendingRestore){
-    backup.append(h("p",{class:"small",style:"font-weight:600",text:"This backup holds "+pendingRestore.entries.length+" purchases and "+((pendingRestore.bills||[]).length)+" bills. Restoring replaces everything on this phone."}),
+    backup.append(h("p",{class:"small",style:"font-weight:600",text:"This backup holds "+pendingRestore.entries.length+" purchases, "+((pendingRestore.bills||[]).length)+" bills and "+((pendingRestore.receipts||[]).length)+" receipt photos. Restoring replaces everything on this phone."}),
       h("div",{class:"btnrow"},
         h("button",{type:"button",class:"btn danger",text:"Replace with this backup",onclick:doRestore}),
         h("button",{type:"button",class:"btn quiet",text:"Cancel",onclick:function(){pendingRestore=null;render();}})));
@@ -935,6 +1165,7 @@ async function saveBackup(){
 async function doRestore(){
   var d=pendingRestore;if(!d)return;pendingRestore=null;
   try{
+    await restoreReceipts(d);
     var keys={};(await recKeys()).forEach(function(k){keys[k]=1;});
     S.entries=sortEntries(d.entries.map(function(e){e=Object.assign({},e);if(e.receiptId&&!keys[e.receiptId]){delete e.receiptId;delete e.receiptType;}if(e.receiptId2&&!keys[e.receiptId2])delete e.receiptId2;return e;}));
     S.bills=Array.isArray(d.bills)?d.bills:[];S.days=d.days&&typeof d.days==="object"?d.days:{};
@@ -963,8 +1194,8 @@ function showLock(mode,problem){
 }
 function lock(){
   if(!DEK)return;
-  DEK=null;S.entries=[];S.bills=[];S.days={};S.ready=false;pendingRestore=null;settingsEraseArmed=false;
-  closeEntry();closeReceipt();if($("chooseDlg").open)$("chooseDlg").close();if($("billDlg").open)$("billDlg").close();
+  DEK=null;S.entries=[];S.bills=[];S.days={};S.ready=false;pendingRestore=null;lockedBackup=null;settingsEraseArmed=false;
+  closeEntry();closeReceipt();if($("chooseDlg").open)$("chooseDlg").close();if($("retDlg").open)$("retDlg").close();if($("billDlg").open)$("billDlg").close();
   $("view").textContent="";$("tape").textContent="";$("checkin").textContent="";
   showLock("unlock");
 }

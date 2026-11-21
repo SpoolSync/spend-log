@@ -42,7 +42,7 @@
 *{box-sizing:border-box}
 html,body{margin:0}
 body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;-webkit-text-size-adjust:100%}
-.wrap{max-width:640px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(64px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));display:flex;flex-direction:column;gap:20px}
+.wrap{max-width:640px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(112px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));display:flex;flex-direction:column;gap:20px}
 h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance;letter-spacing:-.01em}
 h1{font-size:30px;font-weight:700;line-height:1.05}
 h2{font-size:21px;font-weight:700;line-height:1.15}
@@ -155,7 +155,7 @@ textarea{min-height:120px;font-family:var(--mono);font-size:13px}
 .choice .cd{font-size:14px;color:var(--muted)}
 .choice:has(:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
 .vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
-.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px);z-index:10}
+.toast{display:flex;align-items:center;gap:12px;position:fixed;left:50%;bottom:calc(92px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px);z-index:10}
 .toast[hidden]{display:none}
 @media (max-width:400px){.two{grid-template-columns:1fr}.total{font-size:34px}}
 @media (prefers-reduced-motion:no-preference){.bar i,.split i{transition:width .3s ease}}
@@ -169,6 +169,73 @@ textarea{min-height:120px;font-family:var(--mono);font-size:13px}
 .lockcard form{display:flex;flex-direction:column;gap:14px}
 button.status{background:transparent;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--muted);text-align:left}
 button.status.warn{color:var(--impulse)}
+#tabs{display:none}
+/* bottom tab bar */
+.navbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(5,1fr);align-items:end;max-width:640px;margin:0 auto;padding:4px 6px calc(4px + env(safe-area-inset-bottom));background:var(--tape);border-top:1px solid var(--line)}
+@supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){.navbar{background:color-mix(in srgb,var(--tape) 86%,transparent);-webkit-backdrop-filter:saturate(1.4) blur(14px);backdrop-filter:saturate(1.4) blur(14px)}}
+.nb{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px;background:none;border:0;color:var(--muted);font:inherit;font-size:11px;font-weight:600;padding:6px 0 4px;min-height:52px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.nb svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nb[aria-current="page"]{color:var(--accent)}
+.nb[aria-current="page"] svg{stroke-width:2.3}
+.nb .badge{position:absolute;top:3px;left:calc(50% + 5px);min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--impulse);color:#fff;font-size:11px;line-height:18px;font-weight:700;text-align:center}
+.nb .badge[hidden]{display:none}
+.nb.add .plus{display:flex;align-items:center;justify-content:center;width:50px;height:50px;border-radius:50%;background:var(--accent);color:var(--accent-ink);margin-top:-20px;box-shadow:0 6px 18px rgba(20,35,42,.22)}
+.nb.add .plus svg{width:26px;height:26px;stroke-width:2.4}
+@media (prefers-reduced-motion:no-preference){.nb.add:active .plus{transform:scale(.94)}.nb.add .plus{transition:transform .12s ease}}
+/* home cards */
+.card{background:var(--tape);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.cardhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.link{background:none;border:0;color:var(--accent);font:inherit;font-weight:600;cursor:pointer;padding:6px 0;min-height:36px}
+.alerts{display:flex;flex-direction:column;gap:8px}
+.alerts .sub{margin:0}
+.alert{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;background:var(--tape);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:10px;padding:12px 14px;font:inherit;color:inherit;cursor:pointer;min-height:48px}
+.alert.want{border-left-color:var(--want)}
+.alert.impulse{border-left-color:var(--impulse)}
+.chev{color:var(--muted);font-size:20px;line-height:1}
+.bud{display:flex;flex-direction:column;gap:6px}
+.budtop{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.bk{font-weight:600}
+.budbar{position:relative;height:10px;border-radius:5px;background:var(--line);overflow:visible}
+.budbar i{display:block;height:100%;border-radius:5px;background:var(--need)}
+.bud.near .budbar i{background:var(--want)}
+.bud.over .budbar i{background:var(--impulse)}
+.budbar .pace{position:absolute;top:-3px;width:2px;height:16px;background:var(--ink);opacity:.55;border-radius:1px}
+.budrow{display:grid;grid-template-columns:1fr 150px;gap:12px;align-items:center}
+.budrow label{font-weight:600;font-size:14px}
+.trend{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;height:150px}
+.tcol{display:flex;flex-direction:column;align-items:center;gap:4px;min-height:0}
+.tw{flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;min-height:0}
+.tbar{width:70%;max-width:34px;background:var(--line);border-radius:6px 6px 2px 2px}
+.tcol.now .tbar{background:var(--accent)}
+.tv{font-family:var(--mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:14px}
+.tl{font-size:12px;color:var(--muted)}
+.tcol.now .tl,.tcol.now .tv{color:var(--ink);font-weight:600}
+.ins{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+.step{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:12px 0;font:inherit;color:inherit;cursor:pointer;min-height:44px}
+.step:disabled{cursor:default;color:var(--muted);text-decoration:line-through}
+.tick{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:2px solid var(--line);font-size:13px;flex:none}
+.step.done .tick{background:var(--need);border-color:var(--need);color:#fff}
+/* more */
+.mlist{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--tape)}
+.mrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:14px 16px;font:inherit;color:inherit;cursor:pointer;min-height:60px}
+.mrow:last-child{border-bottom:0}
+.mtx{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mt{font-weight:600}
+.ms{font-size:13px;color:var(--muted)}
+.mbadge{min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:var(--impulse);color:#fff;font-size:12px;line-height:22px;text-align:center}
+.back{align-self:flex-start;background:none;border:0;color:var(--accent);font:inherit;font-weight:600;padding:6px 0;cursor:pointer;min-height:40px}
+.monthbar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.monthbar h2{flex:1;text-align:center}
+.mnav{width:44px;height:44px;border:1px solid var(--line);border-radius:10px;background:transparent;color:inherit;font-size:22px;cursor:pointer}
+.mnav:disabled{opacity:.35;cursor:default}
+.recent{display:flex;flex-direction:column;gap:6px}
+.pick{display:flex;justify-content:space-between;gap:10px;width:100%;text-align:left;border:1px solid var(--line);border-radius:10px;background:transparent;color:inherit;font:inherit;padding:10px 12px;cursor:pointer;min-height:44px}
+.pick span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbtn{background:none;border:1px solid currentColor;color:inherit;border-radius:6px;padding:4px 10px;font:inherit;font-weight:700;cursor:pointer}
+#pxslot{display:block}
+#tape{order:2}#view{order:1}.top,#pxslot,#checkin,#alerts{order:0}
+#pxslot[hidden]{display:none}
+.pxcard{border:2px solid var(--accent)}
 </style>
 </head>
 <body>
@@ -205,11 +272,20 @@ button.status.warn{color:var(--impulse)}
     <button type="button" class="status" id="saveStatus">Encrypted on this phone</button>
   </header>
 
+  <section id="pxslot" hidden></section>
   <section class="checkin" id="checkin" aria-label="Daily check-in"></section>
+  <section class="alerts" id="alerts" aria-label="Needs attention" hidden></section>
   <section class="tape" id="tape" aria-label="Month summary"></section>
   <nav class="tabs" id="tabs" role="tablist" aria-label="Sections"></nav>
   <section id="view"></section>
 </main>
+<nav class="navbar" id="navbar" hidden aria-label="Main">
+  <button type="button" class="nb" data-nav="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10.5 12 4l8.5 6.5V20a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
+  <button type="button" class="nb" data-nav="log"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3"/></svg><span>Purchases</span></button>
+  <button type="button" class="nb add" data-nav="add" aria-label="Log a purchase"><span class="plus"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span>Log</span></button>
+  <button type="button" class="nb" data-nav="returns"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15 4 10l5-5M4 10h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span>Returns</span><b class="badge" hidden></b></button>
+  <button type="button" class="nb" data-nav="more"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>More</span><b class="badge" hidden></b></button>
+</nav>
 
 <dialog id="entryDlg" aria-labelledby="entryTitle">
   <form class="form" id="entryForm" novalidate>
@@ -273,6 +349,7 @@ button.status.warn{color:var(--impulse)}
     <h2 id="chooseTitle">Log a purchase</h2>
     <label class="choice" for="scanFile"><input type="file" id="scanFile" accept="image/*" class="vh"><span class="ct">Scan a receipt</span><span class="cd">Take or pick a photo. The phone reads the store, total and every item from the photo. You check it, then save. The photo is kept.</span></label>
     <button type="button" class="choice" id="chooseManual"><span class="ct">Enter it myself</span><span class="cd">Type what, how much and why. Add a receipt photo later, or never.</span></button>
+    <div class="recent" id="recentPicks" hidden></div>
     <div class="btnrow"><button type="button" class="btn quiet" id="chooseCancel">Cancel</button></div>
   </div>
 </dialog>

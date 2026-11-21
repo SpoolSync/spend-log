@@ -1111,7 +1111,10 @@ function pwField(id,label,auto){return h("div",{class:"field"},h("label",{for:id
 
 function viewSettings(v){
   v.append(h("h2",{text:"Lock & backup"}));
-  v.append(h("p",{class:"muted",text:"Everything you log is encrypted and kept on this phone only. The app locks every time you close it, and after 3 minutes in the background."}));
+  v.append(h("p",{class:"muted",text:keepOn?"Everything you log is encrypted and kept on this phone only. After you enter the passcode once, this phone stays unlocked. Your phone's own lock is what protects it. Tap Lock now to ask for the passcode again.":"Everything you log is encrypted and kept on this phone only. The app asks for the passcode every time you open it, and after 3 minutes in the background."}));
+  var every=h("input",{type:"checkbox",id:"s-every"});every.checked=!keepOn;
+  every.addEventListener("change",function(){keepOn=!every.checked;kvSet("keep",keepOn).then(function(){return kvSet("dek",keepOn?DEK:null);}).catch(function(){});render();});
+  v.append(h("label",{class:"check",for:"s-every"},every,"Ask for my passcode every time I open the app"));
   v.append(h("div",{class:"btnrow"},h("button",{type:"button",class:"btn",text:"Lock now",onclick:lock})));
 
   var msg=h("p",{class:"err",role:"alert",hidden:true});
@@ -1194,6 +1197,7 @@ function showLock(mode,problem){
 }
 function lock(){
   if(!DEK)return;
+  kvSet("dek",null).catch(function(){});
   DEK=null;S.entries=[];S.bills=[];S.days={};S.ready=false;pendingRestore=null;lockedBackup=null;settingsEraseArmed=false;
   closeEntry();closeReceipt();if($("chooseDlg").open)$("chooseDlg").close();if($("retDlg").open)$("retDlg").close();if($("billDlg").open)$("billDlg").close();
   $("view").textContent="";$("tape").textContent="";$("checkin").textContent="";
@@ -1221,19 +1225,33 @@ $("lockForm").addEventListener("submit",async function(ev){
       await kvSet("fails",{n:0,until:0});
     }
   }catch(e){return fail("Couldn't open storage on this phone. Close the app and try again.");}
-  $("l-pass").value="";$("l-confirm").value="";
+  $("l-pass").value="";$("l-confirm").value="";go.disabled=false;
+  await rememberKey();enterApp();
+});
+/* Staying unlocked: after one correct passcode the data key is kept on this phone in a form that
+   web pages cannot read out or copy, so the app opens without asking. "Lock now" removes it. */
+var keepOn=true;
+async function rememberKey(){
+  try{keepOn=(await kvGet("keep"))!==false;await kvSet("dek",keepOn?DEK:null);}catch(e){}
+}
+async function openWithKey(key){
+  var box=await kvGet("state"),data={};
+  if(box)data=JSON.parse(new TextDecoder().decode(await unseal(key,box)));
+  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};
+}
+function enterApp(){
   S.ready=true;S.tab="log";S.month=ym(today());
-  $("lock").hidden=true;$("app").hidden=false;go.disabled=false;
+  $("lock").hidden=true;$("app").hidden=false;
   render();
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
-});
+}
 $("l-erase").addEventListener("click",async function(){
   if(!eraseArmed){eraseArmed=true;this.textContent="Tap again: this deletes every purchase and receipt";return;}
   await eraseEverything();
 });
 document.addEventListener("visibilitychange",function(){
   if(document.hidden)hiddenAt=Date.now();
-  else if(DEK&&hiddenAt&&Date.now()-hiddenAt>180000)lock();
+  else if(DEK&&!keepOn&&hiddenAt&&Date.now()-hiddenAt>180000)lock();
 });
 
 fillSelect($("f-cat"),CATS,"Choose a category");
@@ -1242,7 +1260,14 @@ fillSelect($("f-pay"),PAYS.map(function(p){return [p,p];}),"Choose");
 (async function boot(){
   S.month=ym(today());
   if(!window.isSecureContext||!window.crypto||!crypto.subtle||!window.indexedDB){showLock("setup","This app needs to be opened from its https address to encrypt your data.");return;}
-  try{var meta=await kvGet("meta");showLock(meta?"unlock":"setup");}
+  try{
+    var meta=await kvGet("meta"),saved=null;
+    if(meta){
+      try{keepOn=(await kvGet("keep"))!==false;if(keepOn)saved=await kvGet("dek");}catch(e){saved=null;}
+      if(saved){try{await openWithKey(saved);enterApp();}catch(e){DEK=null;saved=null;kvSet("dek",null).catch(function(){});}}
+    }
+    if(!saved)showLock(meta?"unlock":"setup");
+  }
   catch(e){showLock("setup","Storage is blocked here. Turn off Private Browsing, then open the app again.");}
   if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(function(){});
 })();

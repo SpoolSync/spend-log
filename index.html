@@ -178,13 +178,14 @@ button.status.warn{color:var(--impulse)}
     <h1 id="lockTitle">Spend Log</h1>
     <p class="muted" id="lockSub"></p>
     <form id="lockForm" novalidate>
-      <div class="field"><label for="l-pass">Passcode</label><input type="password" id="l-pass" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="field"><label for="l-pass" id="l-passLabel">Passcode</label><input type="password" id="l-pass" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
       <div class="field" id="l-confirmField" hidden><label for="l-confirm">Repeat passcode</label><input type="password" id="l-confirm" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
       <p class="err" id="l-err" role="alert" hidden></p>
       <button type="submit" class="btn primary" id="l-go">Unlock</button>
     </form>
     <button type="button" class="btn quiet danger" id="l-erase" hidden>Forgot it? Erase everything and start over</button>
     <button type="button" class="btn quiet" id="l-acct" hidden>Sign in with a Pixora account instead</button>
+    <button type="button" class="btn quiet" id="l-other" hidden>Use a different account</button>
   </div>
 </section>
 <section class="lock" id="acct" hidden>

@@ -1161,7 +1161,7 @@ function viewSettings(v){
     if(!settingsEraseArmed){settingsEraseArmed=true;render();return;}
     settingsEraseArmed=false;await eraseEverything();
   }});
-  v.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every purchase, bill, receipt photo and the passcode from this phone, and the Spend Log data in your Pixora account if you are signed in."}),h("div",{class:"btnrow"},erase)));
+  v.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every purchase, bill, receipt photo and the passcode from this phone, and the Spend Log data in your Pixora account if you are signed in. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),h("div",{class:"btnrow"},erase)));
 }
 async function saveBackup(){
   var json=JSON.stringify({app:"spendlog",v:1,exportedAt:new Date().toISOString(),entries:S.entries,bills:S.bills,days:S.days});

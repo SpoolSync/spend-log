@@ -105,6 +105,9 @@ function persist(){
   return writeChain;
 }
 
+/* Anonymous feature counts (pixora-usage.js): a fixed word per feature, never amounts, names or receipts. */
+var lastTab="";
+function T(f){try{if(window.PixoraUsage)PixoraUsage.track(f);}catch(e){}}
 var store={
   saveEntry:async function(e){
     var body=clean(e),id=e.id||rid();body.id=id;body.ts=Date.now();
@@ -423,6 +426,7 @@ function findDuplicate(meta,items,date,skipId){
 function dupMsg(d){return "You already logged this receipt: "+title(d)+" on "+dayLabel(d.date)+", receipt total "+money(d.receipt.total)+". Same receipt number, time, total and items. Tap Save anyway only if it really is a separate purchase.";}
 function renderView(){
   var v=$("view");v.textContent="";
+  if(S.tab!==lastTab){lastTab=S.tab;T("tab_"+S.tab);}
   if(S.tab==="log")viewLog(v);else if(S.tab==="inbox")viewInbox(v);else if(S.tab==="bills")viewBills(v);else if(S.tab==="returns")viewReturns(v);else if(S.tab==="import")viewImport(v);else viewSettings(v);
 }
 
@@ -577,6 +581,7 @@ function checkImport(){
   var have={};S.entries.forEach(function(e){if(e.importKey)have[e.importKey]=1;});
   var fresh=[],dupes=0;
   res.rows.forEach(function(r){var k=importKey(r);if(have[k]){dupes++;}else{have[k]=1;fresh.push(r);}});
+  T("bank_import_preview");
   S.importPreview={fresh:fresh.slice(0,300),over:Math.max(0,fresh.length-300),dupes:dupes,skipped:res.skipped,single:res.single};
   render();
 }
@@ -589,7 +594,7 @@ async function runImport(){
       await store.saveEntry({what:"",where:"",bankDesc:tidy(r.desc),amount:r.amount,date:r.date,time:"",category:guessCat(r.desc),pay:"",why:"",note:"",needsDetails:true,source:"import",importKey:importKey(r),createdAt:Date.now()+i});
       done++;}
     toast(done+" rows brought in. They're waiting under Needs details.");
-    S.importText="";S.importPreview=null;S.tab="inbox";
+    S.importText="";S.importPreview=null;S.tab="inbox";T("bank_import_done");
   }catch(e){toast(saveErr(e)+" "+done+" rows were saved before it stopped.");S.importPreview=null;}
   S.importing=false;render();
 }
@@ -868,12 +873,13 @@ function openChooser(date){
   chooseDate=date||today();$("scanFile").value="";$("chooseDlg").showModal();
 }
 $("chooseCancel").addEventListener("click",function(){$("chooseDlg").close();});
-$("chooseManual").addEventListener("click",function(){$("chooseDlg").close();openEntry({date:chooseDate});});
+$("chooseManual").addEventListener("click",function(){T("purchase_manual");$("chooseDlg").close();openEntry({date:chooseDate});});
 $("receiptImg").addEventListener("click",function(){this.classList.toggle("zoom");});
 $("scanFile").addEventListener("change",async function(){
   var f=this.files&&this.files[0];if(!f)return;
   $("chooseDlg").close();
   if(!/^image\//.test(f.type)){toast("Choose a photo of the receipt.");return;}
+  T("receipt_scan");
   if(f.size>20*1024*1024){toast("That photo is over 20 MB. Choose a smaller one.");return;}
   openEntry({date:chooseDate});
   $("entryTitle").textContent="Reading your receipt on this phone…";
@@ -1504,6 +1510,7 @@ async function acctAuth(mode,email,pw){
   if(mode==="reset"){await firebase.auth().sendPasswordResetEmail(email);return null;}
   if(!pw)throw {code:"auth/missing-password",message:"Type your password."};
   var c=mode==="create"?await firebase.auth().createUserWithEmailAndPassword(email,pw):await firebase.auth().signInWithEmailAndPassword(email,pw);
+  T(mode==="create"?"account_create":"signin");
   cuser=c.user;return cuser;
 }
 function authText(e){return AUTH_MSG[e&&e.code]||(e&&e.message)||"Something went wrong. Try again.";}
@@ -1600,4 +1607,18 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){S.tab="settings"
   }
   catch(e){showLock("setup","Storage is blocked here. Turn off Private Browsing, then open the app again.");}
   if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(function(){});
+})();
+/* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
+(function(){
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v11",function(){return fdb&&cuser?fdb:null;});
+  var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
+  wrap("saveEntry",function(e){
+    if(e.needsDetails&&!e.id)return "bank_row_saved";
+    if(e.billId)return "bill_marked_paid";
+    if(e.ret||(e.items||[]).some(function(i){return i.ret;}))return "return_recorded";
+    var k=e.id&&S.entries.some(function(x){return x.id===e.id;})?"entry_edit":"entry_new";
+    return k+(Array.isArray(e.items)&&e.items.length?"_itemized":"");
+  });
+  wrap("deleteEntry");wrap("saveBill");wrap("deleteBill");
+  wrap("setNoSpend",function(d,on){return on?"no_spend_day":"no_spend_undo";});
 })();

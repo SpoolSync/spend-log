@@ -100,7 +100,7 @@ function persist(){
   var snap=JSON.stringify({entries:S.entries,bills:S.bills,days:S.days,daysTs:S.daysTs||0,tomb:S.tomb||{},seen:S.seen||{}}),key=DEK;
   writeChain=writeChain.catch(function(){}).then(async function(){
     await kvSet("state",await seal(key,new TextEncoder().encode(snap)));
-    cloudKick();
+    cloudKick();dashKick();
   });
   return writeChain;
 }
@@ -1342,7 +1342,41 @@ async function cloudStart(){
   if((cm.mts||0)>(meta.mts||0))await kvSet("meta",cm);
   else if((meta.mts||0)>(cm.mts||0))userDoc().set(metaToCloud(meta),{merge:true}).catch(function(){});
   if(stampMissing())await persist();
-  cloudLive=true;cloudListen(uid);cloudKick(0);
+  cloudLive=true;cloudListen(uid);cloudKick(0);dashKick(1500);
+}
+
+/* ---------- Pixora Today dashboard ----------
+   A short summary, encrypted on this phone to your own dashboard's key (see pixora-summary.js).
+   Only your dashboard can open it. Nothing is sent when you're not signed in or have no dashboard. */
+function billDue(b,base){
+  var y=base.getFullYear(),m=base.getMonth(),last=new Date(y,m+1,0).getDate();
+  return iso(new Date(y,m,Math.min(b.dueDay||1,last)));
+}
+function dashSummary(){
+  var t=today(),m=ym(t),now=new Date(),dom=now.getDate(),lm=shiftMonth(m,-1);
+  var inMonth=S.entries.filter(function(e){return !e.needsDetails&&ym(e.date||"")===m;});
+  var lastSoFar=S.entries.filter(function(e){return !e.needsDetails&&ym(e.date||"")===lm&&+(e.date||"").slice(8,10)<=dom;});
+  var byCat={};inMonth.forEach(function(e){var c=CATNAME[e.category]||"Other";byCat[c]=(byCat[c]||0)+net(e);});
+  var top=Object.keys(byCat).map(function(k){return [k,Math.round(byCat[k]*100)/100];}).filter(function(x){return x[1]>0;}).sort(function(a,b){return b[1]-a[1];}).slice(0,3);
+  var paidOf=function(b){return S.entries.some(function(e){return e.billId===b.id&&ym(e.date||"")===m;});};
+  var bills=S.bills.map(function(b){var paid=paidOf(b);return {n:b.name||"Bill",amt:+b.amount||0,due:billDue(b,now),paid:paid};})
+    .sort(function(a,b){return a.due.localeCompare(b.due);});
+  var billsTotal=bills.reduce(function(x,b){return x+b.amt;},0),billsLeft=bills.reduce(function(x,b){return x+(b.paid?0:b.amt);},0);
+  var returns=S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0&&daysLeft(e.returnBy)<=14&&!fullyReturned(e);})
+    .sort(function(a,b){return a.returnBy.localeCompare(b.returnBy);}).slice(0,5).map(function(e){return {w:title(e),by:e.returnBy};});
+  var mine=S.entries.filter(function(e){return e.date===t;});
+  var streak=0,c=new Date();if(!covered(iso(c)))c.setDate(c.getDate()-1);
+  while(streak<400&&covered(iso(c))){streak++;c.setDate(c.getDate()-1);}
+  return {d:t,cur:"CAD",month:m,spent:Math.round(sum(inMonth)*100)/100,lastMonthSoFar:Math.round(sum(lastSoFar)*100)/100,top:top,
+    todayDone:covered(t),todaySpent:Math.round(sum(mine)*100)/100,billsTotal:billsTotal,billsLeft:billsLeft,bills:bills.slice(0,8),
+    returns:returns,inbox:S.entries.filter(function(e){return e.needsDetails;}).length,streak:streak};
+}
+function dashKick(ms){
+  if(!window.PixoraSummary)return;
+  PixoraSummary.schedule("spendlog",function(){
+    if(!fdb||!cuser||!DEK||!S.ready)return null;
+    return {fdb:fdb,uid:cuser.uid,build:dashSummary};
+  },ms);
 }
 function cloudStop(){
   cloudLive=false;if(cloudUnsub){try{cloudUnsub();}catch(e){}cloudUnsub=null;}

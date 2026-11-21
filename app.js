@@ -77,9 +77,9 @@ function importDek(raw){return crypto.subtle.importKey("raw",raw,"AES-GCM",false
 
 async function createVault(pass){
   var salt=rnd(16),raw=rnd(32),k=await kek(pass,salt,ITER);
-  await kvSet("meta",{v:1,salt:salt,iter:ITER,wrapped:await seal(k,raw)});
+  await kvSet("meta",{v:1,vid:rid(),mts:Date.now(),salt:salt,iter:ITER,wrapped:await seal(k,raw)});
   DEK=await importDek(raw);raw.fill(0);
-  S.entries=[];S.bills=[];S.days={};
+  S.entries=[];S.bills=[];S.days={};S.daysTs=0;S.tomb={};S.seen={};
   await persist();
 }
 async function openVault(pass){
@@ -88,37 +88,39 @@ async function openVault(pass){
   var key=await importDek(raw);raw.fill(0);
   var box=await kvGet("state"),data={};
   if(box)data=JSON.parse(new TextDecoder().decode(await unseal(key,box)));
-  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};
+  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};S.daysTs=data.daysTs||0;S.tomb=data.tomb||{};S.seen=data.seen||{};
 }
 async function changePass(cur,next){
   var meta=await kvGet("meta"),raw=await unseal(await kek(cur,meta.salt,meta.iter),meta.wrapped);
   var salt=rnd(16),k=await kek(next,salt,ITER);
-  await kvSet("meta",{v:1,salt:salt,iter:ITER,wrapped:await seal(k,raw)});raw.fill(0);
+  await kvSet("meta",{v:1,vid:meta.vid||rid(),mts:Date.now(),salt:salt,iter:ITER,wrapped:await seal(k,raw)});raw.fill(0);
+  cloudMetaPush().catch(function(){});
 }
 function persist(){
-  var snap=JSON.stringify({entries:S.entries,bills:S.bills,days:S.days}),key=DEK;
+  var snap=JSON.stringify({entries:S.entries,bills:S.bills,days:S.days,daysTs:S.daysTs||0,tomb:S.tomb||{},seen:S.seen||{}}),key=DEK;
   writeChain=writeChain.catch(function(){}).then(async function(){
     await kvSet("state",await seal(key,new TextEncoder().encode(snap)));
+    cloudKick();
   });
   return writeChain;
 }
 
 var store={
   saveEntry:async function(e){
-    var body=clean(e),id=e.id||rid();body.id=id;
+    var body=clean(e),id=e.id||rid();body.id=id;body.ts=Date.now();
     var i=S.entries.findIndex(function(x){return x.id===id;});
     if(i>=0)S.entries[i]=body;else S.entries.push(body);
     sortEntries(S.entries);await persist();render();return id;
   },
-  deleteEntry:async function(id){S.entries=S.entries.filter(function(x){return x.id!==id;});await persist();render();},
+  deleteEntry:async function(id){(S.tomb=S.tomb||{})["e_"+id]=Date.now();S.entries=S.entries.filter(function(x){return x.id!==id;});await persist();render();},
   saveBill:async function(b){
-    var body=clean(b),id=b.id||rid();body.id=id;
+    var body=clean(b),id=b.id||rid();body.id=id;body.ts=Date.now();
     var i=S.bills.findIndex(function(x){return x.id===id;});
     if(i>=0)S.bills[i]=body;else S.bills.push(body);
     await persist();render();
   },
-  deleteBill:async function(id){S.bills=S.bills.filter(function(x){return x.id!==id;});await persist();render();},
-  setNoSpend:async function(date,on){if(on)S.days[date]={noSpend:true};else delete S.days[date];await persist();render();}
+  deleteBill:async function(id){(S.tomb=S.tomb||{})["b_"+id]=Date.now();S.bills=S.bills.filter(function(x){return x.id!==id;});await persist();render();},
+  setNoSpend:async function(date,on){S.daysTs=Date.now();if(on)S.days[date]={noSpend:true};else delete S.days[date];await persist();render();}
 };
 function saveErr(e){
   if(e&&e.name==="QuotaExceededError")return "This phone has no room left for the app. Free up storage, then try again.";
@@ -131,13 +133,13 @@ var assets={
     var box=await seal(DEK,new Uint8Array(await blob.arrayBuffer())),id=rid();
     await recSet(id,{iv:box.iv,ct:box.ct,type:blob.type||"image/jpeg"});return {id:id};
   },
-  delete:function(id){return recDel(id);}
+  delete:function(id){photoDrop(id).catch(function(){});return recDel(id);}
 };
 var sample={json:function(prompt,opts){return readReceipt(opts.images[0]);}};
 
 var receiptUrls=[];
 async function recUrl(id){
-  var rec=await recGet(id);if(!rec||!DEK)throw new Error("missing");
+  var rec=await recGet(id);if(!rec&&DEK)rec=await photoFetch(id).catch(function(){return null;});if(!rec||!DEK)throw new Error("missing");
   var u=URL.createObjectURL(new Blob([await unseal(DEK,rec)],{type:rec.type||"image/jpeg"}));receiptUrls.push(u);return u;
 }
 function closeReceipt(){
@@ -152,7 +154,7 @@ async function showReceipt(id,id2){
     i1.src=await recUrl(id);i2.hidden=!id2;
     if(id2){try{i2.src=await recUrl(id2);}catch(e){i2.hidden=true;}}
     $("receiptDlg").showModal();
-  }catch(e){toast("That receipt photo isn't on this phone any more.");}
+  }catch(e){toast("That receipt photo isn't on this phone or in your account. If it's in your account, connect to the internet and try again.");}
 }
 
 /* Receipt reading runs on the phone, in a separate hidden frame (ocr.html), using the open-source
@@ -276,7 +278,7 @@ function textToItems(text){
 function render(){
   $("todayLabel").textContent=new Date().toLocaleDateString("en-CA",{weekday:"long",month:"long",day:"numeric"});
   var st=$("saveStatus");
-  st.className="status";st.textContent="Encrypted on this phone";
+  paintCloud();
   renderCheckin();renderTape();renderTabs();renderView();
 }
 
@@ -367,7 +369,7 @@ function renderTabs(){
   var nav=$("tabs");nav.textContent="";
   var need=S.entries.filter(function(e){return e.needsDetails;}).length;
   var ret=S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0&&!fullyReturned(e);}).length;
-  [["log","Purchases",0],["inbox","Needs details",need],["returns","Returns",ret],["bills","Bills",0],["import","Bank import",0],["settings","Lock & backup",0]].forEach(function(t){
+  [["log","Purchases",0],["inbox","Needs details",need],["returns","Returns",ret],["bills","Bills",0],["import","Bank import",0],["settings","Account & backup",0]].forEach(function(t){
     nav.append(h("button",{type:"button",class:"tab",role:"tab","aria-selected":S.tab===t[0]?"true":"false",onclick:function(){S.tab=t[0];render();}},t[1],t[2]?h("span",{class:"count",text:"("+t[2]+")"}):null));
   });
 }
@@ -1110,7 +1112,8 @@ var lockMode="unlock",eraseArmed=false,pendingRestore=null,settingsEraseArmed=fa
 function pwField(id,label,auto){return h("div",{class:"field"},h("label",{for:id,text:label}),h("input",{type:"password",id:id,autocomplete:auto,autocapitalize:"off",autocorrect:"off",spellcheck:"false"}));}
 
 function viewSettings(v){
-  v.append(h("h2",{text:"Lock & backup"}));
+  v.append(h("h2",{text:"Account, lock & backup"}));
+  v.append(cloudPanel());
   v.append(h("p",{class:"muted",text:keepOn?"Everything you log is encrypted and kept on this phone only. After you enter the passcode once, this phone stays unlocked. Your phone's own lock is what protects it. Tap Lock now to ask for the passcode again.":"Everything you log is encrypted and kept on this phone only. The app asks for the passcode every time you open it, and after 3 minutes in the background."}));
   var every=h("input",{type:"checkbox",id:"s-every"});every.checked=!keepOn;
   every.addEventListener("change",function(){keepOn=!every.checked;kvSet("keep",keepOn).then(function(){return kvSet("dek",keepOn?DEK:null);}).catch(function(){});render();});
@@ -1152,7 +1155,7 @@ function viewSettings(v){
     if(!settingsEraseArmed){settingsEraseArmed=true;render();return;}
     settingsEraseArmed=false;await eraseEverything();
   }});
-  v.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every purchase, bill, receipt photo and the passcode from this phone."}),h("div",{class:"btnrow"},erase)));
+  v.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every purchase, bill, receipt photo and the passcode from this phone, and the Spend Log data in your Pixora account if you are signed in."}),h("div",{class:"btnrow"},erase)));
 }
 async function saveBackup(){
   var json=JSON.stringify({app:"spendlog",v:1,exportedAt:new Date().toISOString(),entries:S.entries,bills:S.bills,days:S.days});
@@ -1170,20 +1173,24 @@ async function doRestore(){
   try{
     await restoreReceipts(d);
     var keys={};(await recKeys()).forEach(function(k){keys[k]=1;});
+    var now1=Date.now();S.tomb=S.tomb||{};S.entries.forEach(function(e){S.tomb["e_"+e.id]=now1;});S.bills.forEach(function(b){S.tomb["b_"+b.id]=now1;});
     S.entries=sortEntries(d.entries.map(function(e){e=Object.assign({},e);if(e.receiptId&&!keys[e.receiptId]){delete e.receiptId;delete e.receiptType;}if(e.receiptId2&&!keys[e.receiptId2])delete e.receiptId2;return e;}));
     S.bills=Array.isArray(d.bills)?d.bills:[];S.days=d.days&&typeof d.days==="object"?d.days:{};
+    var now2=Date.now()+1;S.entries.forEach(function(e){e.ts=now2;delete S.tomb["e_"+e.id];});S.bills.forEach(function(b){b.ts=now2;delete S.tomb["b_"+b.id];});S.daysTs=now2;S.seen={};
     await persist();toast("Backup restored.");S.tab="log";
   }catch(e){toast(saveErr(e));}
   render();
 }
 async function eraseEverything(){
-  DEK=null;S.entries=[];S.bills=[];S.days={};S.ready=false;
+  cloudStop();
+  if(cuser){try{await cloudWipe();}catch(e){}}
+  DEK=null;S.entries=[];S.bills=[];S.days={};S.tomb={};S.seen={};S.daysTs=0;S.ready=false;
   try{await wipeAll();}catch(e){}
-  showLock("setup");
+  if(cuser)showLock("setup",null,"cloud");else showAccount();
 }
 
-function showLock(mode,problem){
-  lockMode=mode;eraseArmed=false;
+function showLock(mode,problem,src){
+  lockMode=mode;eraseArmed=false;$("acct").hidden=true;
   $("app").hidden=true;$("lock").hidden=false;
   $("lockTitle").textContent=mode==="setup"?"Set a passcode":"Enter your passcode";
   $("lockSub").textContent=mode==="setup"?"It encrypts everything you log. It can't be recovered if you forget it, so pick one you'll remember. Six or more characters is much harder to guess.":"Your spending is encrypted on this phone.";
@@ -1193,12 +1200,16 @@ function showLock(mode,problem){
   $("l-go").textContent=mode==="setup"?"Set passcode":"Unlock";$("l-go").disabled=!!problem;
   var er=$("l-err");er.hidden=!problem;er.textContent=problem||"";
   var x=$("l-erase");x.hidden=mode!=="unlock";x.textContent="Forgot it? Erase everything and start over";
+  if(src==="cloud")$("lockSub").textContent=mode==="setup"?"Signed in. Now set a Spend Log passcode. It encrypts everything before it reaches your Pixora account, so nobody else can read it. You type it once per phone, and it can't be recovered if you forget it.":"Signed in. Enter the Spend Log passcode you set on your other phone. This phone will remember it after this.";
+  $("l-acct").hidden=!(mode==="setup"&&!cuser&&src!=="cloud");
   if(!problem)try{$("l-pass").focus();}catch(e){}
 }
+$("l-acct").addEventListener("click",function(){showAccount();});
 function lock(){
   if(!DEK)return;
   kvSet("dek",null).catch(function(){});
-  DEK=null;S.entries=[];S.bills=[];S.days={};S.ready=false;pendingRestore=null;lockedBackup=null;settingsEraseArmed=false;
+  cloudStop();
+  DEK=null;S.entries=[];S.bills=[];S.days={};S.tomb={};S.seen={};S.daysTs=0;S.ready=false;pendingRestore=null;lockedBackup=null;settingsEraseArmed=false;
   closeEntry();closeReceipt();if($("chooseDlg").open)$("chooseDlg").close();if($("retDlg").open)$("retDlg").close();if($("billDlg").open)$("billDlg").close();
   $("view").textContent="";$("tape").textContent="";$("checkin").textContent="";
   showLock("unlock");
@@ -1237,12 +1248,13 @@ async function rememberKey(){
 async function openWithKey(key){
   var box=await kvGet("state"),data={};
   if(box)data=JSON.parse(new TextDecoder().decode(await unseal(key,box)));
-  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};
+  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};S.daysTs=data.daysTs||0;S.tomb=data.tomb||{};S.seen=data.seen||{};
 }
 function enterApp(){
   S.ready=true;S.tab="log";S.month=ym(today());
-  $("lock").hidden=true;$("app").hidden=false;
+  $("lock").hidden=true;$("acct").hidden=true;$("app").hidden=false;
   render();
+  cloudInit().then(function(){paintCloud();if(cuser)cloudStart();});
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
 }
 $("l-erase").addEventListener("click",async function(){
@@ -1257,6 +1269,317 @@ document.addEventListener("visibilitychange",function(){
 fillSelect($("f-cat"),CATS,"Choose a category");
 fillSelect($("b-cat"),CATS,"Choose a category");
 fillSelect($("f-pay"),PAYS.map(function(p){return [p,p];}),"Choose");
+
+/* ---------- Pixora account and cloud sync ----------
+   Firebase project "Pixora" (pixora-bca1f), web app "Spend Log". Each person's data lives under
+   apps/spendlog/users/<their uid>, which the database rules let only that person read or write.
+   Every record and receipt photo is encrypted on the phone with the Spend Log data key before it
+   is uploaded, so the database only ever holds ciphertext: nobody with database access, the
+   project owner included, can read it. The data key itself is stored only wrapped by the passcode. */
+var CLOUD_ROOT="apps/spendlog/users/",PHOTO_CHUNK=900000;
+var fdb=null,cuser=null,authReady=null,cloudUnsub=null,cloudLive=false,cloudState="off",cloudConflict=null,cloudErr="",lastSync=0;
+var pushing=false,pushAgain=false,pushTimer=null,photoBusy=false;
+function u8(b){return b instanceof Uint8Array?b:new Uint8Array(b);}
+function toBytes(u){return firebase.firestore.Blob.fromUint8Array(u8(u));}
+function fromBytes(b){return b&&b.toUint8Array?b.toUint8Array():new Uint8Array(0);}
+function sts(){return firebase.firestore.FieldValue.serverTimestamp();}
+function cloudInit(){
+  if(authReady)return authReady;
+  authReady=new Promise(function(res){
+    if(!window.firebase||!window.PIXORA_CLOUD){res(null);return;}
+    try{
+      firebase.initializeApp(window.PIXORA_CLOUD);
+      fdb=firebase.firestore();
+      if(window.PIXORA_EMULATOR){fdb.useEmulator("127.0.0.1",window.PIXORA_EMULATOR.db);firebase.auth().useEmulator("http://127.0.0.1:"+window.PIXORA_EMULATOR.auth,{disableWarnings:true});}
+      fdb.enablePersistence({synchronizeTabs:true}).catch(function(){});
+    }catch(e){fdb=null;res(null);return;}
+    var first=true,t=setTimeout(function(){if(first){first=false;res(cuser);}},6000);
+    firebase.auth().onAuthStateChanged(function(u){
+      var was=cuser&&cuser.uid;cuser=u||null;
+      if(first){first=false;clearTimeout(t);res(cuser);return;}
+      if((u&&u.uid)===was)return;
+      cloudStop();if(u&&DEK)cloudStart();
+      if(S.ready)render();
+    });
+  });
+  return authReady;
+}
+function userDoc(){return fdb.doc(CLOUD_ROOT+cuser.uid);}
+function itemsCol(){return userDoc().collection("items");}
+function photosCol(){return userDoc().collection("photos");}
+function metaToCloud(m){return {v:1,vid:m.vid,iter:m.iter,salt:toBytes(m.salt),wiv:toBytes(m.wrapped.iv),wct:toBytes(m.wrapped.ct),mts:m.mts||0};}
+function metaFromCloud(d){return {v:1,vid:d.vid,iter:d.iter,salt:fromBytes(d.salt),wrapped:{iv:fromBytes(d.wiv),ct:fromBytes(d.wct)},mts:d.mts||0};}
+async function getCloudMeta(){var s=await userDoc().get();return s.exists&&s.data().vid?metaFromCloud(s.data()):null;}
+function setCloud(state,err){cloudState=state;cloudErr=err||"";if(state==="synced")lastSync=Date.now();paintCloud();}
+function paintCloud(){
+  var st=$("saveStatus");if(!st)return;
+  var txt=!cuser?"On this phone only · Sign in to back up":cloudState==="synced"?"Synced to your Pixora account":cloudState==="syncing"?"Syncing…":cloudState==="offline"?"Offline · will sync later":cloudState==="conflict"?"Account needs your other passcode":cloudState==="error"?"Sync paused":"Connecting to your account…";
+  st.textContent=txt;st.className="status"+((!cuser||cloudState==="conflict"||cloudState==="error")?" warn":"");
+}
+function stampMissing(){
+  var ch=false;
+  S.entries.forEach(function(e){if(!e.ts){e.ts=1;ch=true;}});
+  S.bills.forEach(function(b){if(!b.ts){b.ts=1;ch=true;}});
+  if(!S.daysTs&&Object.keys(S.days||{}).length){S.daysTs=1;ch=true;}
+  return ch;
+}
+async function cloudStart(){
+  if(!fdb||!cuser||!DEK)return;
+  cloudStop();setCloud("syncing");
+  var uid=cuser.uid,meta=await kvGet("meta");
+  if(!meta.vid){meta.vid=rid();meta.mts=Date.now();await kvSet("meta",meta);}
+  var cm;
+  try{cm=await getCloudMeta();}catch(e){setCloud("offline");return;}
+  if(!cuser||cuser.uid!==uid||!DEK)return;
+  if(!cm){
+    try{await userDoc().set(Object.assign(metaToCloud(meta),{at:sts(),ph:[]}));}catch(e){setCloud("offline");return;}
+    cm=meta;
+  }
+  if(cm.vid!==meta.vid){cloudConflict=cm;setCloud("conflict");if(S.ready)render();return;}
+  cloudConflict=null;
+  if((cm.mts||0)>(meta.mts||0))await kvSet("meta",cm);
+  else if((meta.mts||0)>(cm.mts||0))userDoc().set(metaToCloud(meta),{merge:true}).catch(function(){});
+  if(stampMissing())await persist();
+  cloudLive=true;cloudListen(uid);cloudKick(0);
+}
+function cloudStop(){
+  cloudLive=false;if(cloudUnsub){try{cloudUnsub();}catch(e){}cloudUnsub=null;}
+  if(pushTimer){clearTimeout(pushTimer);pushTimer=null;}
+  setCloud(cuser?"connecting":"off");
+}
+async function cloudListen(uid){
+  var mark=(await kvGet("pulled:"+uid))||0;
+  if(!cloudLive)return;
+  var q=itemsCol().where("sv",">",firebase.firestore.Timestamp.fromMillis(mark));
+  cloudUnsub=q.onSnapshot({includeMetadataChanges:true},async function(snap){
+    if(!cloudLive||!DEK)return;
+    var changed=false,top=mark,changes=snap.docChanges();
+    for(var i=0;i<changes.length;i++){
+      var c=changes[i];if(c.type==="removed")continue;
+      var d=c.doc.data({serverTimestamps:"none"});if(!d.sv)continue;
+      top=Math.max(top,d.sv.toMillis());
+      try{if(await applyRemote(c.doc.id,d))changed=true;}catch(e){}
+    }
+    if(changed){await persist();if(S.ready)render();}
+    if(!snap.metadata.fromCache){if(top>mark){mark=top;kvSet("pulled:"+uid,mark).catch(function(){});}if(!pushing)setCloud("synced");}
+  },function(err){setCloud("error",err&&err.code);});
+}
+async function applyRemote(key,d){
+  S.tomb=S.tomb||{};S.seen=S.seen||{};
+  var isE=key.indexOf("e_")===0,isB=key.indexOf("b_")===0,id=key.slice(2),list=isE?S.entries:isB?S.bills:null;
+  var idx=list?list.findIndex(function(x){return x.id===id;}):-1,cur=list?(idx>=0?list[idx].ts||0:0):(S.daysTs||0);
+  if((d.ts||0)<=Math.max(cur,S.tomb[key]||0))return false;
+  S.seen[key]=d.ts;delete S.tomb[key];
+  if(d.del){
+    if(list&&idx>=0){var gone=list[idx];list.splice(idx,1);[gone.receiptId,gone.receiptId2].forEach(function(r){if(r)recDel(r).catch(function(){});});}
+    else if(key==="days"){S.days={};S.daysTs=d.ts;}
+    return true;
+  }
+  var rec=JSON.parse(new TextDecoder().decode(await unseal(DEK,{iv:fromBytes(d.iv),ct:fromBytes(d.ct)})));
+  if(key==="days"){S.days=rec||{};S.daysTs=d.ts;return true;}
+  rec.id=id;rec.ts=d.ts;
+  if(idx>=0)list[idx]=rec;else list.push(rec);
+  if(isE)sortEntries(S.entries);
+  return true;
+}
+function cloudKick(ms){
+  if(!cloudLive)return;
+  if(pushTimer)clearTimeout(pushTimer);
+  pushTimer=setTimeout(function(){pushTimer=null;cloudPush();},ms==null?800:ms);
+}
+async function cloudPush(){
+  if(!cloudLive||!DEK||!cuser)return;
+  if(pushing){pushAgain=true;return;}
+  pushing=true;setCloud(navigator.onLine===false?"offline":"syncing");
+  var uid=cuser.uid;
+  try{
+    var mark=(await kvGet("pushed:"+uid))||0,ops=[],seen=S.seen||{},top=mark;
+    S.entries.forEach(function(e){if((e.ts||0)>mark&&seen["e_"+e.id]!==e.ts)ops.push(["e_"+e.id,e,e.ts]);});
+    S.bills.forEach(function(b){if((b.ts||0)>mark&&seen["b_"+b.id]!==b.ts)ops.push(["b_"+b.id,b,b.ts]);});
+    if((S.daysTs||0)>mark&&seen.days!==S.daysTs)ops.push(["days",S.days,S.daysTs]);
+    Object.keys(S.tomb||{}).forEach(function(k){if(S.tomb[k]>mark)ops.push([k,null,S.tomb[k]]);});
+    [S.entries,S.bills].forEach(function(l){l.forEach(function(r){if((r.ts||0)>top)top=r.ts;});});
+    top=Math.max(top,S.daysTs||0);Object.keys(S.tomb||{}).forEach(function(k){top=Math.max(top,S.tomb[k]);});
+    for(var i=0;i<ops.length;i+=200){
+      var batch=fdb.batch();
+      for(var j=i;j<Math.min(i+200,ops.length);j++){
+        var o=ops[j],ref=itemsCol().doc(o[0]);
+        if(o[1]==null)batch.set(ref,{ts:o[2],del:true,sv:sts()});
+        else{
+          var body=Object.assign({},o[1]);delete body.ts;
+          var box=await seal(DEK,new TextEncoder().encode(JSON.stringify(body)));
+          batch.set(ref,{ts:o[2],iv:toBytes(box.iv),ct:toBytes(box.ct),sv:sts()});
+        }
+      }
+      await batch.commit();
+    }
+    if(cuser&&cuser.uid===uid)await kvSet("pushed:"+uid,top);
+    await photoSync(uid);
+    if(cuser&&cuser.uid===uid)setCloud("synced");
+  }catch(e){setCloud(navigator.onLine===false?"offline":"error",e&&e.code);}
+  finally{pushing=false;if(pushAgain){pushAgain=false;cloudKick(300);}}
+}
+/* Receipt photos: the same encrypted bytes kept on the phone, split into pieces under 1 MB. */
+async function photoSync(uid){
+  if(photoBusy)return;photoBusy=true;
+  try{
+    var up=(await kvGet("photosUp:"+uid))||{},want=[];
+    S.entries.forEach(function(e){[e.receiptId,e.receiptId2].forEach(function(r){if(r&&!up[r]&&want.indexOf(r)<0)want.push(r);});});
+    for(var i=0;i<want.length;i++){
+      if(!cloudLive||!cuser||cuser.uid!==uid)break;
+      var rec=await recGet(want[i]);if(!rec)continue;
+      var ct=u8(rec.ct),n=Math.max(1,Math.ceil(ct.length/PHOTO_CHUNK));
+      for(var k=0;k<n;k++){
+        var part={part:toBytes(ct.subarray(k*PHOTO_CHUNK,(k+1)*PHOTO_CHUNK))};
+        if(k===0){part.n=n;part.iv=toBytes(rec.iv);part.type=rec.type||"image/jpeg";}
+        await photosCol().doc(want[i]+"_"+k).set(part);
+      }
+      await userDoc().update({ph:firebase.firestore.FieldValue.arrayUnion(want[i]+":"+n)});
+      up[want[i]]=n;await kvSet("photosUp:"+uid,up);
+    }
+  }finally{photoBusy=false;}
+}
+async function photoFetch(id){
+  if(!fdb||!cuser||!DEK)return null;
+  var first=await photosCol().doc(id+"_0").get();if(!first.exists)return null;
+  var d=first.data(),n=d.n||1,parts=[fromBytes(d.part)];
+  for(var k=1;k<n;k++){var s=await photosCol().doc(id+"_"+k).get();if(!s.exists)return null;parts.push(fromBytes(s.data().part));}
+  var len=parts.reduce(function(t,p){return t+p.length;},0),ct=new Uint8Array(len),at=0;
+  parts.forEach(function(p){ct.set(p,at);at+=p.length;});
+  var rec={iv:fromBytes(d.iv),ct:ct,type:d.type||"image/jpeg"};
+  await recSet(id,rec);
+  var up=(await kvGet("photosUp:"+cuser.uid))||{};up[id]=n;kvSet("photosUp:"+cuser.uid,up).catch(function(){});
+  return rec;
+}
+async function photoDrop(id){
+  if(!fdb||!cuser)return;
+  var uid=cuser.uid,up=(await kvGet("photosUp:"+uid))||{},n=up[id]||1;
+  for(var k=0;k<n;k++)photosCol().doc(id+"_"+k).delete().catch(function(){});
+  userDoc().update({ph:firebase.firestore.FieldValue.arrayRemove(id+":"+n)}).catch(function(){});
+  delete up[id];kvSet("photosUp:"+uid,up).catch(function(){});
+}
+async function cloudMetaPush(){
+  if(!fdb||!cuser)return;
+  var meta=await kvGet("meta");
+  if(cloudLive)await userDoc().set(metaToCloud(meta),{merge:true});
+}
+/* Removes this person's Spend Log data from their Pixora account. */
+async function cloudWipe(){
+  if(!fdb||!cuser)return;
+  var s=await userDoc().get(),ph=s.exists&&Array.isArray(s.data().ph)?s.data().ph:[],refs=[];
+  ph.forEach(function(p){var a=String(p).split(":"),n=+a[1]||1;for(var k=0;k<n;k++)refs.push(photosCol().doc(a[0]+"_"+k));});
+  var items=await itemsCol().get();items.forEach(function(d){refs.push(d.ref);});
+  refs.push(userDoc());
+  for(var i=0;i<refs.length;i+=400){var b=fdb.batch();refs.slice(i,i+400).forEach(function(r){b.delete(r);});await b.commit();}
+  var uid=cuser.uid;["pushed:","pulled:","photosUp:"].forEach(function(p){kvSet(p+uid,null).catch(function(){});});
+}
+/* Joining an account that already holds Spend Log data from another phone: unwrap that data key with
+   the passcode set there, re-encrypt this phone's data with it, and from then on both phones share one key. */
+async function cloudJoin(pass){
+  var cm=cloudConflict,raw=await unseal(await kek(pass,cm.salt,cm.iter),cm.wrapped);
+  var nk=await importDek(raw);raw.fill(0);
+  var ids=await recKeys();
+  for(var i=0;i<ids.length;i++){var r=await recGet(ids[i]);if(!r)continue;var b=await seal(nk,await unseal(DEK,r));await recSet(ids[i],{iv:b.iv,ct:b.ct,type:r.type});}
+  DEK=nk;await kvSet("meta",cm);
+  S.entries.forEach(function(e){e.ts=Math.max(e.ts||0,1);});S.bills.forEach(function(b){b.ts=Math.max(b.ts||0,1);});
+  if(Object.keys(S.days||{}).length)S.daysTs=Math.max(S.daysTs||0,1);
+  await persist();await kvSet("pushed:"+cuser.uid,0);await kvSet("photosUp:"+cuser.uid,{});
+  await rememberKey();cloudConflict=null;await cloudStart();
+}
+async function cloudReplace(){
+  await cloudWipe();
+  S.entries.forEach(function(e){e.ts=Math.max(e.ts||0,1);});S.bills.forEach(function(b){b.ts=Math.max(b.ts||0,1);});
+  await persist();cloudConflict=null;await cloudStart();
+}
+var AUTH_MSG={"auth/invalid-credential":"That email and password don't match a Pixora account.","auth/wrong-password":"That email and password don't match a Pixora account.","auth/user-not-found":"That email and password don't match a Pixora account.","auth/invalid-login-credentials":"That email and password don't match a Pixora account.","auth/email-already-in-use":"There is already a Pixora account with that email. Tap Sign in instead.","auth/weak-password":"Use at least 6 characters for the password.","auth/invalid-email":"That doesn't look like an email address.","auth/network-request-failed":"No connection. Connect to the internet and try again.","auth/too-many-requests":"Too many tries. Wait a few minutes and try again."};
+async function acctAuth(mode,email,pw){
+  await cloudInit();
+  if(!fdb)throw {code:"cloud/unavailable",message:"The Pixora account service couldn't start here."};
+  email=(email||"").trim();
+  if(!/^\S+@\S+\.\S+$/.test(email))throw {code:"auth/invalid-email"};
+  if(mode==="reset"){await firebase.auth().sendPasswordResetEmail(email);return null;}
+  if(!pw)throw {code:"auth/missing-password",message:"Type your password."};
+  var c=mode==="create"?await firebase.auth().createUserWithEmailAndPassword(email,pw):await firebase.auth().signInWithEmailAndPassword(email,pw);
+  cuser=c.user;return cuser;
+}
+function authText(e){return AUTH_MSG[e&&e.code]||(e&&e.message)||"Something went wrong. Try again.";}
+function acctForm(prefix,onDone){
+  var msg=h("p",{class:"err",role:"alert",hidden:true});
+  var em=h("input",{type:"email",id:prefix+"-email",autocomplete:"username",autocapitalize:"off",spellcheck:"false",inputmode:"email"});
+  var pw=h("input",{type:"password",id:prefix+"-pw",autocomplete:"current-password"});
+  function go(mode){return async function(){
+    msg.hidden=true;msg.style.color="";
+    var btns=wrap.querySelectorAll("button");btns.forEach(function(b){b.disabled=true;});
+    try{
+      await acctAuth(mode,em.value,pw.value);
+      if(mode==="reset"){msg.style.color="var(--muted)";msg.textContent="If a Pixora account uses that email, a reset link is on its way. Check your spam folder too.";msg.hidden=false;}
+      else{pw.value="";await onDone();}
+    }catch(e){msg.textContent=authText(e);msg.hidden=false;}
+    btns.forEach(function(b){b.disabled=false;});
+  };}
+  var wrap=h("div",{class:"field",style:"gap:12px"},
+    h("div",{class:"field"},h("label",{for:prefix+"-email",text:"Email"}),em),
+    h("div",{class:"field"},h("label",{for:prefix+"-pw",text:"Password"}),pw),msg,
+    h("div",{class:"btnrow"},
+      h("button",{type:"button",class:"btn primary",text:"Sign in",onclick:go("signin")}),
+      h("button",{type:"button",class:"btn",text:"Create account",onclick:go("create")}),
+      h("button",{type:"button",class:"btn quiet",text:"Forgot password",onclick:go("reset")})));
+  return wrap;
+}
+/* First screen on a phone with no Spend Log data yet. */
+function showAccount(problem){
+  $("app").hidden=true;$("lock").hidden=true;$("acct").hidden=false;
+  var box=$("acctBody");box.textContent="";
+  box.append(acctForm("a",async function(){$("acct").hidden=true;await routeSignedIn();}));
+  box.append(h("button",{type:"button",class:"btn quiet",style:"align-self:flex-start",text:"Use on this phone only, without an account",onclick:function(){$("acct").hidden=true;showLock("setup");}}));
+  if(problem){box.prepend(h("p",{class:"err",role:"alert",text:problem}));}
+}
+async function routeSignedIn(){
+  var cm=null;
+  try{cm=await getCloudMeta();}
+  catch(e){showAccount("Couldn't reach your Pixora account. Check the connection and sign in again.");return;}
+  if(cm){await kvSet("meta",cm);showLock("unlock",null,"cloud");}
+  else showLock("setup",null,"cloud");
+}
+function cloudPanel(){
+  var p=h("div",{class:"panel"},h("h3",{text:"Pixora account"}));
+  if(!fdb&&!window.firebase){p.append(h("p",{class:"small muted",text:"The account service isn't available in this view."}));return p;}
+  if(!cuser){
+    p.append(h("p",{class:"small muted",text:"Sign in with your Pixora account to back up Spend Log and use it on more than one phone. Everything is encrypted on this phone before it's uploaded, so nobody else can read it, including whoever runs Pixora."}));
+    p.append(acctForm("s",async function(){render();await cloudStart();render();}));
+    return p;
+  }
+  p.append(h("p",{class:"small",text:"Signed in as "+(cuser.email||"your Pixora account")+"."}));
+  if(cloudState==="conflict"){
+    var msg=h("p",{class:"err",role:"alert",hidden:true});
+    p.append(h("p",{class:"small",style:"font-weight:600",text:"This account already has Spend Log data from another phone, protected by a different passcode. Enter that passcode to combine it with what's on this phone."}),
+      pwField("s-joinpw","Passcode from your other phone","current-password"),msg);
+    var jb=h("button",{type:"button",class:"btn primary",text:"Combine",onclick:async function(){
+      jb.disabled=true;jb.textContent="Combining…";
+      try{await cloudJoin($("s-joinpw").value);toast("Combined. Both phones now use the same passcode.");render();}
+      catch(e){msg.textContent="That passcode doesn't open the data in your account.";msg.hidden=false;jb.disabled=false;jb.textContent="Combine";}
+    }});
+    var rb=h("button",{type:"button",class:"btn danger",text:joinWipeArmed?"Tap again: deletes the account's Spend Log data":"I forgot it: replace the account's data with this phone's",onclick:async function(){
+      if(!joinWipeArmed){joinWipeArmed=true;render();return;}
+      joinWipeArmed=false;rb.disabled=true;
+      try{await cloudReplace();toast("Your account now holds this phone's data.");}catch(e){toast("Couldn't reach your account. Try again.");}
+      render();
+    }});
+    p.append(h("div",{class:"btnrow"},jb,rb));
+  }else{
+    var when=lastSync?new Date(lastSync).toLocaleTimeString("en-CA",{hour:"numeric",minute:"2-digit"}):"";
+    p.append(h("p",{class:"small muted",text:cloudState==="synced"?"Everything is backed up"+(when?" (last checked "+when+")":"")+". Changes from your other phones show up here on their own.":cloudState==="offline"?"Offline. Changes are kept on this phone and upload when you're back online.":cloudState==="error"?"Sync paused"+(cloudErr?" ("+cloudErr+")":"")+". Tap Sync now to try again.":"Syncing…"}));
+    p.append(h("div",{class:"btnrow"},
+      h("button",{type:"button",class:"btn",text:"Sync now",onclick:function(){cloudStart().then(render);}}),
+      h("button",{type:"button",class:"btn quiet",text:"Sign out",onclick:async function(){cloudStop();await firebase.auth().signOut();cuser=null;render();toast("Signed out. Your data stays on this phone.");}})));
+  }
+  return p;
+}
+var joinWipeArmed=false;
+addEventListener("offline",function(){if(cuser&&cloudLive)setCloud("offline");});
+addEventListener("online",function(){if(cuser&&DEK&&(cloudState==="offline"||cloudState==="error"))cloudStart();});
+
+$("saveStatus").addEventListener("click",function(){if(S.ready){S.tab="settings";render();}});
 (async function boot(){
   S.month=ym(today());
   if(!window.isSecureContext||!window.crypto||!crypto.subtle||!window.indexedDB){showLock("setup","This app needs to be opened from its https address to encrypt your data.");return;}
@@ -1266,7 +1589,10 @@ fillSelect($("f-pay"),PAYS.map(function(p){return [p,p];}),"Choose");
       try{keepOn=(await kvGet("keep"))!==false;if(keepOn)saved=await kvGet("dek");}catch(e){saved=null;}
       if(saved){try{await openWithKey(saved);enterApp();}catch(e){DEK=null;saved=null;kvSet("dek",null).catch(function(){});}}
     }
-    if(!saved)showLock(meta?"unlock":"setup");
+    if(!saved){
+      if(meta)showLock("unlock");
+      else{var u0=await cloudInit();if(u0)await routeSignedIn();else showAccount();}
+    }
   }
   catch(e){showLock("setup","Storage is blocked here. Turn off Private Browsing, then open the app again.");}
   if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(function(){});

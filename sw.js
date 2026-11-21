@@ -1,5 +1,5 @@
 /* Spend Log: keeps the app's own files on the phone so it opens offline. No user data passes through here. */
-var CACHE="spendlog-v7";
+var CACHE="spendlog-v8";
 var SHELL=["./","index.html","app.js","cloud.js","firebase-app-compat.js","firebase-auth-compat.js","firebase-firestore-compat.js","ocr.html","ocr-frame.js","manifest.webmanifest","icon-180.png","icon-192.png","icon-512.png"];
 var BIG=/ppocr\.js|ort-wasm|pp-det|pp-rec|pp-keys/;
 self.addEventListener("install",function(e){e.waitUntil(caches.open(CACHE).then(function(c){return c.addAll(SHELL);}).then(function(){return self.skipWaiting();}));});

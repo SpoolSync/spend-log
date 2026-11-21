@@ -133,13 +133,13 @@ var assets={
     var box=await seal(DEK,new Uint8Array(await blob.arrayBuffer())),id=rid();
     await recSet(id,{iv:box.iv,ct:box.ct,type:blob.type||"image/jpeg"});return {id:id};
   },
-  delete:function(id){photoDrop(id).catch(function(){});return recDel(id);}
+  delete:function(id){return recDel(id);}
 };
 var sample={json:function(prompt,opts){return readReceipt(opts.images[0]);}};
 
 var receiptUrls=[];
 async function recUrl(id){
-  var rec=await recGet(id);if(!rec&&DEK)rec=await photoFetch(id).catch(function(){return null;});if(!rec||!DEK)throw new Error("missing");
+  var rec=await recGet(id);if(!rec||!DEK)throw new Error("missing");
   var u=URL.createObjectURL(new Blob([await unseal(DEK,rec)],{type:rec.type||"image/jpeg"}));receiptUrls.push(u);return u;
 }
 function closeReceipt(){
@@ -154,7 +154,7 @@ async function showReceipt(id,id2){
     i1.src=await recUrl(id);i2.hidden=!id2;
     if(id2){try{i2.src=await recUrl(id2);}catch(e){i2.hidden=true;}}
     $("receiptDlg").showModal();
-  }catch(e){toast("That receipt photo isn't on this phone or in your account. If it's in your account, connect to the internet and try again.");}
+  }catch(e){toast("This receipt photo is on the phone that scanned it. Photos stay on that phone; a full backup file brings them to this one.");}
 }
 
 /* Receipt reading runs on the phone, in a separate hidden frame (ocr.html), using the open-source
@@ -1308,7 +1308,7 @@ function userDoc(){return fdb.doc(CLOUD_ROOT+cuser.uid);}
 function itemsCol(){return userDoc().collection("items");}
 function photosCol(){return userDoc().collection("photos");}
 function metaToCloud(m){return {v:1,vid:m.vid,iter:m.iter,salt:toBytes(m.salt),wiv:toBytes(m.wrapped.iv),wct:toBytes(m.wrapped.ct),mts:m.mts||0};}
-function metaFromCloud(d){return {v:1,vid:d.vid,iter:d.iter,salt:fromBytes(d.salt),wrapped:{iv:fromBytes(d.wiv),ct:fromBytes(d.wct)},mts:d.mts||0};}
+function metaFromCloud(d){return {v:1,vid:d.vid,iter:d.iter,salt:fromBytes(d.salt),wrapped:{iv:fromBytes(d.wiv),ct:fromBytes(d.wct)},mts:d.mts||0,ph:Array.isArray(d.ph)?d.ph:[]};}
 async function getCloudMeta(){var s=await userDoc().get();return s.exists&&s.data().vid?metaFromCloud(s.data()):null;}
 function setCloud(state,err){cloudState=state;cloudErr=err||"";if(state==="synced")lastSync=Date.now();paintCloud();}
 function paintCloud(){
@@ -1337,6 +1337,8 @@ async function cloudStart(){
   }
   if(cm.vid!==meta.vid){cloudConflict=cm;setCloud("conflict");if(S.ready)render();return;}
   cloudConflict=null;
+  if(cm.ph&&cm.ph.length)photoCleanup(cm.ph).catch(function(){});
+  delete cm.ph;
   if((cm.mts||0)>(meta.mts||0))await kvSet("meta",cm);
   else if((meta.mts||0)>(cm.mts||0))userDoc().set(metaToCloud(meta),{merge:true}).catch(function(){});
   if(stampMissing())await persist();
@@ -1414,49 +1416,17 @@ async function cloudPush(){
       await batch.commit();
     }
     if(cuser&&cuser.uid===uid)await kvSet("pushed:"+uid,top);
-    await photoSync(uid);
     if(cuser&&cuser.uid===uid)setCloud("synced");
   }catch(e){setCloud(navigator.onLine===false?"offline":"error",e&&e.code);}
   finally{pushing=false;if(pushAgain){pushAgain=false;cloudKick(300);}}
 }
-/* Receipt photos: the same encrypted bytes kept on the phone, split into pieces under 1 MB. */
-async function photoSync(uid){
-  if(photoBusy)return;photoBusy=true;
-  try{
-    var up=(await kvGet("photosUp:"+uid))||{},want=[];
-    S.entries.forEach(function(e){[e.receiptId,e.receiptId2].forEach(function(r){if(r&&!up[r]&&want.indexOf(r)<0)want.push(r);});});
-    for(var i=0;i<want.length;i++){
-      if(!cloudLive||!cuser||cuser.uid!==uid)break;
-      var rec=await recGet(want[i]);if(!rec)continue;
-      var ct=u8(rec.ct),n=Math.max(1,Math.ceil(ct.length/PHOTO_CHUNK));
-      for(var k=0;k<n;k++){
-        var part={part:toBytes(ct.subarray(k*PHOTO_CHUNK,(k+1)*PHOTO_CHUNK))};
-        if(k===0){part.n=n;part.iv=toBytes(rec.iv);part.type=rec.type||"image/jpeg";}
-        await photosCol().doc(want[i]+"_"+k).set(part);
-      }
-      await userDoc().update({ph:firebase.firestore.FieldValue.arrayUnion(want[i]+":"+n)});
-      up[want[i]]=n;await kvSet("photosUp:"+uid,up);
-    }
-  }finally{photoBusy=false;}
-}
-async function photoFetch(id){
-  if(!fdb||!cuser||!DEK)return null;
-  var first=await photosCol().doc(id+"_0").get();if(!first.exists)return null;
-  var d=first.data(),n=d.n||1,parts=[fromBytes(d.part)];
-  for(var k=1;k<n;k++){var s=await photosCol().doc(id+"_"+k).get();if(!s.exists)return null;parts.push(fromBytes(s.data().part));}
-  var len=parts.reduce(function(t,p){return t+p.length;},0),ct=new Uint8Array(len),at=0;
-  parts.forEach(function(p){ct.set(p,at);at+=p.length;});
-  var rec={iv:fromBytes(d.iv),ct:ct,type:d.type||"image/jpeg"};
-  await recSet(id,rec);
-  var up=(await kvGet("photosUp:"+cuser.uid))||{};up[id]=n;kvSet("photosUp:"+cuser.uid,up).catch(function(){});
-  return rec;
-}
-async function photoDrop(id){
-  if(!fdb||!cuser)return;
-  var uid=cuser.uid,up=(await kvGet("photosUp:"+uid))||{},n=up[id]||1;
-  for(var k=0;k<n;k++)photosCol().doc(id+"_"+k).delete().catch(function(){});
-  userDoc().update({ph:firebase.firestore.FieldValue.arrayRemove(id+":"+n)}).catch(function(){});
-  delete up[id];kvSet("photosUp:"+uid,up).catch(function(){});
+/* Receipt photos stay on the phone that took them and are never uploaded. An earlier version uploaded
+   them for a short time; any it left in the account are removed here. */
+async function photoCleanup(ph){
+  var refs=[];
+  ph.forEach(function(p){var a=String(p).split(":"),n=+a[1]||1;for(var k=0;k<n;k++)refs.push(photosCol().doc(a[0]+"_"+k));});
+  for(var i=0;i<refs.length;i+=400){var b=fdb.batch();refs.slice(i,i+400).forEach(function(r){b.delete(r);});await b.commit();}
+  await userDoc().update({ph:[]});
 }
 async function cloudMetaPush(){
   if(!fdb||!cuser)return;
@@ -1545,7 +1515,7 @@ function cloudPanel(){
   var p=h("div",{class:"panel"},h("h3",{text:"Pixora account"}));
   if(!fdb&&!window.firebase){p.append(h("p",{class:"small muted",text:"The account service isn't available in this view."}));return p;}
   if(!cuser){
-    p.append(h("p",{class:"small muted",text:"Sign in with your Pixora account to back up Spend Log and use it on more than one phone. Everything is encrypted on this phone before it's uploaded, so nobody else can read it, including whoever runs Pixora."}));
+    p.append(h("p",{class:"small muted",text:"Sign in with your Pixora account to back up Spend Log and use it on more than one phone. Your purchases, items, bills and returns are encrypted on this phone before they're uploaded, so nobody else can read them, including whoever runs Pixora. Receipt photos stay on this phone only."}));
     p.append(acctForm("s",async function(){render();await cloudStart();render();}));
     return p;
   }
@@ -1568,7 +1538,7 @@ function cloudPanel(){
     p.append(h("div",{class:"btnrow"},jb,rb));
   }else{
     var when=lastSync?new Date(lastSync).toLocaleTimeString("en-CA",{hour:"numeric",minute:"2-digit"}):"";
-    p.append(h("p",{class:"small muted",text:cloudState==="synced"?"Everything is backed up"+(when?" (last checked "+when+")":"")+". Changes from your other phones show up here on their own.":cloudState==="offline"?"Offline. Changes are kept on this phone and upload when you're back online.":cloudState==="error"?"Sync paused"+(cloudErr?" ("+cloudErr+")":"")+". Tap Sync now to try again.":"Syncing…"}));
+    p.append(h("p",{class:"small muted",text:cloudState==="synced"?"Your data is backed up"+(when?" (last checked "+when+")":"")+". Changes from your other phones show up here on their own. Receipt photos stay on the phone that took them; a full backup file carries them to a new phone.":cloudState==="offline"?"Offline. Changes are kept on this phone and upload when you're back online.":cloudState==="error"?"Sync paused"+(cloudErr?" ("+cloudErr+")":"")+". Tap Sync now to try again.":"Syncing…"}));
     p.append(h("div",{class:"btnrow"},
       h("button",{type:"button",class:"btn",text:"Sync now",onclick:function(){cloudStart().then(render);}}),
       h("button",{type:"button",class:"btn quiet",text:"Sign out",onclick:async function(){cloudStop();await firebase.auth().signOut();cuser=null;render();toast("Signed out. Your data stays on this phone.");}})));

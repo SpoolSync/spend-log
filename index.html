@@ -332,6 +332,9 @@ button.status.warn{color:var(--impulse)}
       <label for="f-return">Might return it? Return by</label>
       <input type="date" id="f-return">
       <label class="check" for="f-returnAny"><input type="checkbox" id="f-returnAny"> Returnable any time</label>
+      <label for="f-warranty">Warranty until</label>
+      <input type="date" id="f-warranty">
+      <div class="btnrow" style="margin-top:-4px"><button type="button" class="btn quiet mini" id="f-w1">+1 year</button><button type="button" class="btn quiet mini" id="f-w2">+2 years</button><button type="button" class="btn quiet mini" id="f-w0">None</button></div>
       <div class="chips"><button type="button" class="chip" id="f-ret30">30 days</button><button type="button" class="chip" id="f-ret90">90 days</button><button type="button" class="chip" id="f-ret0">Clear</button></div>
       <p class="note" id="f-returnNote"></p>
     </div>
@@ -407,6 +410,8 @@ button.status.warn{color:var(--impulse)}
 <script src="cloud.js"></script>
 <script src="pixora-summary.js"></script>
 <script src="pixora-usage.js"></script>
+<script src="subs.js"></script>
 <script src="app.js"></script>
+<script src="subs-view.js"></script>
 </body>
 </html>

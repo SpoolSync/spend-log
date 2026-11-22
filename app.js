@@ -432,7 +432,7 @@ function renderView(){
   var v=$("view");v.textContent="";
   if(S.tab!==lastTab){lastTab=S.tab;T("tab_"+S.tab);}
   if(SUBOF[S.tab])v.append(backBtn());
-  if(S.tab==="home")viewHome(v);else if(S.tab==="more")viewMore(v);else if(S.tab==="budgets")viewBudgets(v);else if(S.tab==="log")viewLog(v);else if(S.tab==="inbox")viewInbox(v);else if(S.tab==="bills")viewBills(v);else if(S.tab==="returns")viewReturns(v);else if(S.tab==="import")viewImport(v);else viewSettings(v);
+  if(S.tab==="home")viewHome(v);else if(S.tab==="more")viewMore(v);else if(S.tab==="budgets")viewBudgets(v);else if(S.tab==="log")viewLog(v);else if(S.tab==="inbox")viewInbox(v);else if(S.tab==="bills")viewBills(v);else if(S.tab==="returns")viewReturns(v);else if(S.tab==="import")viewImport(v);else if(S.tab==="subs")viewSubs(v);else if(S.tab==="warranty")viewWarranty(v);else viewSettings(v);
 }
 
 function viewLog(v){
@@ -656,7 +656,7 @@ function openEntry(e){
   $("f-time").value=e&&e.id?(e.time||""):(e&&e.date&&e.date!==today()?"":z(now.getHours())+":"+z(now.getMinutes()));
   $("f-cat").value=(e&&e.category)||"";$("f-pay").value=(e&&e.pay)||"";
   ["need","want","impulse"].forEach(function(w){$("f-why-"+w).checked=!!(e&&e.why===w);});
-  $("f-note").value=(e&&e.note)||"";$("f-return").value=(e&&e.returnBy)||"";$("f-items").value=itemsToText(e&&e.items);$("f-returnAny").checked=!!(e&&e.returnAny);returnTouched=!!(e&&e.returnSet==="manual");returnAuto=!!(e&&e.returnSet==="auto");$("f-returnNote").textContent=returnAuto?"Auto-filled from the store's usual policy. Edit it if your receipt says otherwise.":"";$("f-receipt2Note").textContent=(editing&&editing.receiptId2)?"A second photo is attached. Choose a file to replace it.":"";$("f-noreceipt").checked=!!(e&&e.noReceipt);
+  $("f-note").value=(e&&e.note)||"";$("f-return").value=(e&&e.returnBy)||"";$("f-warranty").value=(e&&e.warrantyUntil)||"";$("f-items").value=itemsToText(e&&e.items);$("f-returnAny").checked=!!(e&&e.returnAny);returnTouched=!!(e&&e.returnSet==="manual");returnAuto=!!(e&&e.returnSet==="auto");$("f-returnNote").textContent=returnAuto?"Auto-filled from the store's usual policy. Edit it if your receipt says otherwise.":"";$("f-receipt2Note").textContent=(editing&&editing.receiptId2)?"A second photo is attached. Choose a file to replace it.":"";$("f-noreceipt").checked=!!(e&&e.noReceipt);
   $("f-err").hidden=true;$("f-save").disabled=false;$("f-save").textContent="Save purchase";
   var del=$("f-delete");del.hidden=!editing;del.textContent="Delete";
   $("entryDlg").dataset.bill=(e&&e.billId)||"";
@@ -732,6 +732,7 @@ $("entryForm").addEventListener("submit",async function(ev){
   var e=Object.assign({},editing||{},{what:what,where:$("f-where").value.trim(),amount:Math.round(amount*100)/100,date:date,time:$("f-time").value||"",category:$("f-cat").value,pay:$("f-pay").value,why:why,note:$("f-note").value.trim(),noReceipt:$("f-noreceipt").checked,needsDetails:false});
   if(!e.createdAt)e.createdAt=Date.now();
   if(!returnTouched)suggestReturn();
+  e.warrantyUntil=parseDate($("f-warranty").value)||"";if(e.warrantyUntil&&window.PixoraUsage)PixoraUsage.track("warranty_set");
   e.returnAny=$("f-returnAny").checked;e.returnBy=e.returnAny?"":(parseDate($("f-return").value)||"");e.returnSet=returnTouched?"manual":(returnAuto?"auto":"");
   if(!e.source)e.source="manual";
   e.scanned=!!scanSaved;scanSaved=false;
@@ -1436,6 +1437,7 @@ function dashSummary(){
   while(streak<400&&covered(iso(c))){streak++;c.setDate(c.getDate()-1);}
   return {d:t,cur:"CAD",month:m,spent:Math.round(sum(inMonth)*100)/100,lastMonthSoFar:Math.round(sum(lastSoFar)*100)/100,top:top,
     todayDone:covered(t),todaySpent:Math.round(sum(mine)*100)/100,billsTotal:billsTotal,billsLeft:billsLeft,bills:bills.slice(0,8),
+    subs:(function(){try{return subSummary();}catch(e){return null;}})(),
     returns:returns,inbox:S.entries.filter(function(e){return e.needsDetails;}).length,streak:streak};
 }
 function dashKick(ms){
@@ -1896,6 +1898,7 @@ function viewMore(v){
   var rows=[["bills","Bills",S.bills.length?(soon?soon+(soon===1?" bill due soon":" bills due soon"):S.bills.length+(S.bills.length===1?" monthly bill":" monthly bills")):"Rent, phone, insurance, subscriptions",soon],
     ["budgets","Budgets",nb?nb+(nb===1?" category has":" categories have")+" a monthly limit":"Set a monthly limit per category",0],
     ["inbox","Needs details",need?need+(need===1?" bank row to describe":" bank rows to describe"):"Nothing waiting",need],
+    subMoreRow(),warrantyMoreRow(),
     ["import","Bank import","Bring in a CSV from online banking",0],
     ["settings","Account & backup",cuser?(cuser.email||"Signed in"):"Not signed in · this phone only",0]];
   var list=h("div",{class:"mlist"});
@@ -1911,6 +1914,7 @@ function renderAlerts(){
   billsDueSoon().forEach(function(b){var d=daysLeft(billDue(b,now));items.push({k:d,cls:d<0?"impulse":"want",t:(d<0?"Overdue: ":d===0?"Due today: ":d===1?"Due tomorrow: ":"Due in "+d+" days: ")+b.name+" · "+money(b.amount),go:"bills"});});
   openReturns().forEach(function(e){var d=daysLeft(e.returnBy);items.push({k:d,cls:d<=2?"impulse":"want",t:(d===0?"Last day to return ":"Return by "+dayLabel(e.returnBy)+": ")+title(e),go:"returns"});});
   budgetStatus().filter(function(b){return b.pct>=80;}).forEach(function(b){items.push({k:5,cls:b.pct>=100?"impulse":"want",t:b.pct>=100?(CATNAME[b.c]||"Other")+" is "+money(b.spent-b.limit)+" over budget":(CATNAME[b.c]||"Other")+" has used "+Math.round(b.pct)+"% of its budget",go:"budgets"});});
+  try{subAlerts().forEach(function(x){items.push(x);});}catch(e){}
   var need=S.entries.filter(function(e){return e.needsDetails;}).length;
   if(need)items.push({k:20,cls:"",t:need+(need===1?" bank row needs details":" bank rows need details"),go:"inbox"});
   items.sort(function(a,b){return a.k-b.k;});

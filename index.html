@@ -369,6 +369,11 @@ details.more .field+.field{margin-top:14px}
 #f-cancel{display:none}
 .footrow:not(:has(.btn:not([hidden]):not(#f-cancel))){display:none}
 .amountbox input[type=number]{text-align:left}
+.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.two .field{min-width:0}
+.two input{min-width:0;width:100%;max-width:100%;box-sizing:border-box;-webkit-appearance:none;appearance:none}
+input[type=date],input[type=time]{min-width:0;max-width:100%;text-align:left}
+input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and-time-value{text-align:left}
 /* chooser */
 #chooseDlg .form{padding-top:18px;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
 .choice{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper)}
@@ -567,11 +572,11 @@ details.more .field+.field{margin-top:14px}
 <script src="firebase-app-compat.js"></script>
 <script src="firebase-auth-compat.js"></script>
 <script src="firebase-firestore-compat.js"></script>
-<script src="cloud.js?v=15"></script>
-<script src="pixora-summary.js?v=15"></script>
-<script src="pixora-usage.js?v=15"></script>
-<script src="subs.js?v=15"></script>
-<script src="app.js?v=15"></script>
-<script src="subs-view.js?v=15"></script>
+<script src="cloud.js?v=16"></script>
+<script src="pixora-summary.js?v=16"></script>
+<script src="pixora-usage.js?v=16"></script>
+<script src="subs.js?v=16"></script>
+<script src="app.js?v=16"></script>
+<script src="subs-view.js?v=16"></script>
 </body>
 </html>

@@ -199,6 +199,23 @@ async function readReceipt(blob){
 var STORES=[["costco","Costco"],["walmart","Walmart"],["best buy","Best Buy"],["canadian tire","Canadian Tire"],["home depot","Home Depot"],["ikea","IKEA"],["winners","Winners"],["marshalls","Marshalls"],["homesense","HomeSense"],["shoppers","Shoppers Drug Mart"],["sport chek","Sport Chek"],["staples","Staples"],["dollarama","Dollarama"],["no frills","No Frills"],["loblaws","Loblaws"],["freshco","FreshCo"],["sobeys","Sobeys"],["food basics","Food Basics"],["tim hortons","Tim Hortons"],["mcdonald","McDonald's"],["starbucks","Starbucks"],["lcbo","LCBO"],["petro-canada","Petro-Canada"],["metro","Metro"]];
 var PRICE_END=/\$?(\d{1,4}[.,]\d{2})\s*(-?)\s*[A-Z0-9 ]{0,5}$/;
 var NOT_ITEM=/member|invoice|auth|reference|seq#|app#|approved|balance|amount|total|\btax\b|change|card|purchase|copy|records|items|\b(ave|avenue|st|street|rd|road|blvd|drive|hwy|unit|suite)\b/i;
+var HEADER=/\b\d{3}[-. ]\d{3}[-. ][\dZOzo]{4}\b|\b[A-Z]\d[A-Z] ?\d[A-Z]\d\b|\b(?:st|op|te|tr|tc|reg|lane|cashier|store)\s*#|\bm[g9]r\b|survey|www\.|\.(?:ca|com)\b|gift cards?|contest|rules|\bsold\b/i;
+/* A date printed as 11/20/26 can be month-first (Walmart, Costco) or day-first; pick the reading that isn't in the future. */
+function receiptDate(text){
+  var m,t=today(),best=null;
+  if((m=/(20\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(text)))return parseDate(m[1]+"-"+m[2]+"-"+m[3]);
+  var re=/(?:^|[^\d\/])(\d{1,2})[\/\-.](\d{1,2})[\/\-.](20\d{2}|\d{2})(?![\d\/])/g;
+  while((m=re.exec(text))){
+    var y=m[3].length===2?"20"+m[3]:m[3];
+    [[m[1],m[2]],[m[2],m[1]]].forEach(function(md){
+      var d=parseDate(y+"-"+md[0]+"-"+md[1]);
+      if(d&&d<=t&&daysLeft(d)>=-400&&(!best||d>best))best=d;
+    });
+    if(best)return best;
+  }
+  return null;
+}
+function titleItem(s){return s.toLowerCase().replace(/\b[a-z]/g,function(c){return c.toUpperCase();}).replace(/\b(Gv|Ks|Pc|Kg|Ml|Lb|Xl|Tv|Usb)\b/g,function(w){return w.toUpperCase();});}
 function fixName(s){return s.replace(/\b0(?=[A-Z]{2})/g,"O").replace(/([A-Z])0(?=[A-Z])/g,"$1O").replace(/\s+/g," ").trim().slice(0,60);}
 function parseReceiptBoxes(boxes){
   var lines=(boxes||[]).slice().sort(function(a,b){return a.y-b.y;}).map(function(b){return String(b.t||"").replace(/[：]/g,":").replace(/\s+/g," ").trim();}).filter(Boolean);
@@ -211,20 +228,33 @@ function parseReceiptBoxes(boxes){
     var letters=lines[i].replace(/[^A-Za-z ]/g,"").trim();
     if(letters.length>=4&&letters.length>=lines[i].length*0.7){out.where=letters.toLowerCase().replace(/\b[a-z]/g,function(c){return c.toUpperCase();}).slice(0,40);break;}
   }
-  if((m=/(20\d{2})[\/\-.](\d{1,2})[\/\-.](\d{2})\s*([0-2]?\d):([0-5]\d)/.exec(text))){out.date=parseDate(m[1]+"-"+m[2]+"-"+m[3]);out.time=z(+m[4])+":"+m[5];}
-  else{
-    if((m=/(20\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(text)))out.date=parseDate(m[1]+"-"+m[2]+"-"+m[3]);
-    else if((m=/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](20\d{2})\b/.exec(text)))out.date=parseDate(m[0]);
-    if((m=/\b([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/.exec(text)))out.time=z(+m[1])+":"+m[2];
-  }
+  out.date=receiptDate(text);
+  if((m=/(?:\d{2}\s+|\b)([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/.exec(text)))out.time=z(+m[1])+":"+m[2];
   /* items: names and prices are collected as two ordered columns, then paired by position.
      On a creased or tilted receipt a price often lands on the neighbouring line, but its order in the column holds. */
   var names=[],prices=[],end=lines.length;
   for(i=0;i<lines.length;i++)if(/sub ?total/i.test(lines[i])||(/\btotal\b|^tax\b/i.test(lines[i])&&!/items|number/i.test(lines[i]))){end=i;break;}
-  for(i=0;i<end;i++){
+  var start=0;
+  for(i=0;i<end;i++){if(PRICE_END.exec(lines[i])&&!NOT_ITEM.test(lines[i])&&!HEADER.test(lines[i])){start=i;break;}}
+  if(start>0&&/^\d{3,}\s*[A-Za-z\/]/.test(lines[start-1])&&!PRICE_END.exec(lines[start-1])&&!NOT_ITEM.test(lines[start-1])&&!HEADER.test(lines[start-1]))start--;
+  /* Walmart-style lines: NAME then a long UPC then the price (and a tax letter).
+     Names, UPCs and prices are read as three columns, so a line the OCR split in two still pairs up. */
+  var upcLines=0;for(i=start;i<end;i++){var bb=lines[i].replace(PRICE_END,"").trim();if(/[A-Za-z]{2}.*\s\d{8,14}$/.test(bb))upcLines++;}
+  if(upcLines>=2){
+    var wn=[],wu=[],wp=[];
+    for(i=start;i<end;i++){
+      var L=lines[i];if(NOT_ITEM.test(L)||HEADER.test(L))continue;
+      var P=PRICE_END.exec(L),B=P?L.slice(0,P.index).trim():L.trim(),U=/\b(\d{8,14})\b/.exec(B);
+      if(U){wu.push(U[1]);B=(B.slice(0,U.index)+" "+B.slice(U.index+U[0].length)).trim();}
+      if(/[A-Za-z]{2}/.test(B))wn.push(fixName(B));
+      if(P)wp.push(Math.abs(parseAmount(P[1]))*(P[2]?-1:1));
+    }
+    if(wn.length&&wn.length===wp.length)wn.forEach(function(n,k){out.items.push({id:wu.length===wn.length?wu[k]:"",name:n,cost:Math.round(wp[k]*100)/100});});
+  }
+  for(i=out.items.length?end:start;i<end;i++){
     var l=lines[i],pm=PRICE_END.exec(l),price=pm?Math.abs(parseAmount(pm[1]))*(pm[2]?-1:1):null,body=pm?l.slice(0,pm.index).trim():l;
     if(pm&&!body){prices.push(price);continue;}
-    if(NOT_ITEM.test(l))continue;
+    if(NOT_ITEM.test(l)||HEADER.test(l))continue;
     var a=/^(\d{2,})\s*(\/?\s*.*)$/.exec(body),id="",name="";
     if(a){
       id=a[1];name=a[2].trim();
@@ -236,7 +266,7 @@ function parseReceiptBoxes(boxes){
     if(pm)prices.push(price);
   }
   var zip=prices.length>=names.length;
-  names.forEach(function(n,k){var c=zip?prices[k]:n.own;out.items.push({id:n.id,name:n.name,cost:c==null||isNaN(c)?0:Math.round(c*100)/100});});
+  if(names.length)names.forEach(function(n,k){var c=zip?prices[k]:n.own;out.items.push({id:n.id,name:n.name,cost:c==null||isNaN(c)?0:Math.round(c*100)/100});});
   var sum=Math.round(out.items.reduce(function(t,it){return t+it.cost;},0)*100)/100,sub=null,tax=null,amts=[],tot=null;
   for(i=0;i<lines.length;i++){
     var q=PRICE_END.exec(lines[i]),v=q?Math.abs(parseAmount(q[1])):null;
@@ -250,11 +280,13 @@ function parseReceiptBoxes(boxes){
   else if(tot!=null)out.amount=tot;
   else if(sum>0)out.amount=sum;
   out.verified=out.items.length>0&&((sub!=null&&Math.abs(sum-sub)<0.011)||(sub==null&&out.amount!=null&&sum>0&&sum<=out.amount+0.001&&sum>=out.amount*0.85));
-  if((m=/inv\w{3,5}\s*(?:number|no\.?|#)?\s*[:#]?\s*([A-Z0-9]{4,})/i.exec(text))||(m=/(?:receipt|trans(?:action)?)\s*(?:number|no\.?|#)\s*[:#]?\s*([A-Z0-9]{4,})/i.exec(text)))out.receipt_no=m[1];
+  if((m=/\bTC#?\s*((?:\d[\d ]{14,30}\d))/.exec(text)))out.receipt_no=m[1].replace(/\s+/g,"");
+  else if((m=/inv\w{3,5}\s*(?:number|no\.?|#)?\s*[:#]?\s*([A-Z0-9]{4,})/i.exec(text))||(m=/(?:receipt|trans(?:action)?)\s*(?:number|no\.?|#)\s*[:#]?\s*([A-Z0-9]{4,})/i.exec(text)))out.receipt_no=m[1];
   out.pay=/master ?card|visa|amex|american express/i.test(text)?"Credit card":/debit|interac/i.test(text)?"Debit":/\bcash\b/i.test(text)?"Cash":null;
-  var real=out.items.filter(function(it){return it.cost>=0&&it.name.charAt(0)!=="/";}).map(function(it){return it.name.toLowerCase();});
+  var realIt=out.items.filter(function(it){return it.cost>=0&&it.name.charAt(0)!=="/";}),real=realIt.map(function(it){return it.name.toLowerCase();});
   out.category=guessCat(out.where+" "+real.join(" "))||"";
-  if(real.length)out.what=(real.slice(0,2).join(", ")+(real.length>2?" +"+(real.length-2)+" more":"")).replace(/^./,function(c){return c.toUpperCase();}).slice(0,120);
+  var top=realIt.slice().sort(function(x,y){return y.cost-x.cost;}).slice(0,2).map(function(it){return titleItem(it.name);});
+  if(top.length)out.what=(top.join(", ")+(realIt.length>2?" +"+(realIt.length-2)+" more":"")).slice(0,120);
   return out;
 }
 
@@ -2150,7 +2182,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v15",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v16",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

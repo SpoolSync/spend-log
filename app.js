@@ -738,7 +738,7 @@ $("f-read").addEventListener("click",async function(){
   btn.disabled=false;btn.textContent="Read this receipt on the phone";
   if(autoScan){
     autoScan=false;
-    if(readOk&&$("entryDlg").open&&$("f-err").hidden&&$("f-what").value.trim()&&parseFloat($("f-amount").value)>0){$("entryTitle").textContent="Check the details";}
+    if(readOk&&$("entryDlg").open&&$("f-err").hidden&&$("f-what").value.trim()&&parseFloat($("f-amount").value)>0){$("entryTitle").textContent="Check the details";if(r&&r.where&&$("f-where").value.trim())quickCheck(r);}
     else if($("entryDlg").open)$("entryTitle").textContent=readOk?"Check the details":"Add the details";
   }
 });
@@ -2161,6 +2161,43 @@ function heroCard(){
 }
 
 buildPickers();
+
+/* ---------- Quick check after a scan: store, date and total at a glance ---------- */
+function relDay(d){var n=-daysLeft(d);return n===0?"today":n===1?"yesterday":n>1&&n<7?n+" days ago":"";}
+function time12(t){var m=/^(\d{1,2}):(\d{2})/.exec(t||"");if(!m)return "";var hh=+m[1];return (hh%12||12)+":"+m[2]+(hh<12?" AM":" PM");}
+function quickCheck(r){
+  var dlg=$("qcDlg"),box=$("qcBody");box.textContent="";
+  var where=$("f-where").value.trim(),date=$("f-date").value,tm=$("f-time").value,amt=parseFloat($("f-amount").value)||0;
+  var items=textToItems($("f-items").value),cat=$("f-cat").value,pay=$("f-pay").value;
+  var dateFound=!!(r&&r.date),dup=pendingReceipt?findDuplicate(Object.assign({},pendingReceipt,{total:amt}),items,date,null):null;
+  function jump(id){return function(){T("qc_fix_"+id.replace("f-",""));dlg.close();var el=$(id);if(id==="f-items")$("f-more").open=true;setTimeout(function(){el.scrollIntoView({block:"center"});try{el.focus({preventScroll:true});}catch(e){}},50);};}
+  function line(label,value,note,warn,id){
+    return h("button",{type:"button",class:"qcl"+(warn?" warn":""),onclick:jump(id),"aria-label":label+": "+value+(note?". "+note:"")+". Tap to change."},
+      h("span",{class:"qk",text:label}),h("span",{class:"qv"},h("span",{text:value}),note?h("span",{class:"qn",text:note}):null),h("span",{class:"chev","aria-hidden":"true",text:"›"}));
+  }
+  box.append(h("div",{class:"qchead"},catIcon(cat),h("div",null,h("p",{class:"qstore",text:where}),h("p",{class:"qamt",text:money(amt)}))));
+  var rd=relDay(date);
+  box.append(line("Date",dayLabel(date)+(tm?" · "+time12(tm):""),dateFound?(rd?"That's "+rd+".":""):"No date found on the receipt, so this is a guess.",!dateFound,"f-date"));
+  if(items.length){
+    var sumI=Math.round(items.reduce(function(t,i){return t+(+i.cost||0);},0)*100)/100;
+    box.append(line("Items",items.length+(items.length===1?" item":" items"),r&&r.verified?"Prices add up to the receipt total.":"Prices don't add up to the total ("+money(sumI)+"). Worth a look.",!(r&&r.verified),"f-items"));
+  }
+  if(pay)box.append(line("Paid with",pay,"",false,"f-pay"));
+  if(dup)box.append(h("p",{class:"qdup",role:"alert",text:"You already logged this receipt on "+dayLabel(dup.date)+" ("+title(dup)+"). Same receipt number, time, total and items."}));
+  var acts=$("qcActs");acts.textContent="";
+  if(dup){
+    acts.append(h("button",{type:"button",class:"btn primary wide",text:"Don't save it again",onclick:function(){T("qc_dup_skip");dlg.close();closeEntry();toast("Not saved. It's already in your purchases.");}}),
+      h("button",{type:"button",class:"btn quiet wide",text:"It's a separate purchase",onclick:function(){T("qc_dup_keep");dupOk=true;dlg.close();$("entryForm").requestSubmit();}}));
+  }else{
+    acts.append(h("button",{type:"button",class:"btn primary wide",text:"Yes, save it",onclick:function(){T("qc_yes");dlg.close();$("entryForm").requestSubmit();}}),
+      h("button",{type:"button",class:"btn quiet wide",text:"Something's off, let me fix it",onclick:function(){T("qc_fix");dlg.close();}}));
+  }
+  $("qcTitle").textContent=dup?"Already logged":"Is this right?";
+  T("qc_shown");
+  dlg.showModal();
+}
+$("entryDlg").addEventListener("close",function(){if($("qcDlg").open)$("qcDlg").close();});
+
 $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}});
 (async function boot(){
   S.month=ym(today());
@@ -2182,7 +2219,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v16",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v17",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

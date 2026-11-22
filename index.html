@@ -374,6 +374,25 @@ details.more .field+.field{margin-top:14px}
 .two input{min-width:0;width:100%;max-width:100%;box-sizing:border-box;-webkit-appearance:none;appearance:none}
 input[type=date],input[type=time]{min-width:0;max-width:100%;text-align:left}
 input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and-time-value{text-align:left}
+dialog.qc{width:calc(100% - 32px);max-width:420px;border-radius:22px;padding:0;border:0;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+dialog.qc::backdrop{background:rgba(10,20,30,.45)}
+@media (prefers-reduced-motion:no-preference){dialog.qc[open]{animation:qcIn .22s cubic-bezier(.2,.8,.2,1)}}
+@keyframes qcIn{from{transform:scale(.94);opacity:0}to{transform:none;opacity:1}}
+.qcwrap{padding:20px 18px 16px;display:flex;flex-direction:column;gap:12px}
+.qcwrap h2{margin:0;font-size:15px;font-weight:600;color:var(--muted);text-align:center}
+.qchead{display:flex;align-items:center;gap:14px;padding:4px 2px 6px}
+.qchead .cic{width:52px;height:52px;border-radius:16px}
+.qchead .cic svg{width:28px;height:28px}
+.qstore{margin:0;font-size:22px;font-weight:700;line-height:1.15}
+.qamt{margin:2px 0 0;font-family:var(--display);font-size:30px;font-weight:700;font-variant-numeric:tabular-nums}
+.qcl{display:grid;grid-template-columns:78px 1fr auto;align-items:center;gap:8px;width:100%;text-align:left;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:11px 12px;font:inherit;color:inherit;cursor:pointer;min-height:52px}
+.qcl.warn{border-color:var(--want);background:color-mix(in srgb,var(--want) 10%,var(--paper))}
+.qk{font-size:13px;font-weight:600;color:var(--muted)}
+.qv{display:flex;flex-direction:column;gap:2px;font-weight:600}
+.qn{font-size:12.5px;font-weight:500;color:var(--muted)}
+.qcl.warn .qn{color:var(--ink)}
+.qdup{margin:0;padding:12px;border-radius:12px;background:color-mix(in srgb,var(--impulse) 12%,var(--paper));border:1px solid var(--impulse);font-weight:600;font-size:14px}
+.qcacts{display:flex;flex-direction:column;gap:8px;margin-top:4px}
 /* chooser */
 #chooseDlg .form{padding-top:18px;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
 .choice{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper)}
@@ -512,6 +531,13 @@ input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and
   </form>
 </dialog>
 
+<dialog id="qcDlg" class="qc" aria-labelledby="qcTitle">
+  <div class="qcwrap">
+    <h2 id="qcTitle">Is this right?</h2>
+    <div id="qcBody"></div>
+    <div class="qcacts" id="qcActs"></div>
+  </div>
+</dialog>
 <dialog id="chooseDlg" class="sheet" aria-labelledby="chooseTitle">
   <div class="form">
     <h2 id="chooseTitle">Log a purchase</h2>
@@ -572,11 +598,11 @@ input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and
 <script src="firebase-app-compat.js"></script>
 <script src="firebase-auth-compat.js"></script>
 <script src="firebase-firestore-compat.js"></script>
-<script src="cloud.js?v=16"></script>
-<script src="pixora-summary.js?v=16"></script>
-<script src="pixora-usage.js?v=16"></script>
-<script src="subs.js?v=16"></script>
-<script src="app.js?v=16"></script>
-<script src="subs-view.js?v=16"></script>
+<script src="cloud.js?v=17"></script>
+<script src="pixora-summary.js?v=17"></script>
+<script src="pixora-usage.js?v=17"></script>
+<script src="subs.js?v=17"></script>
+<script src="app.js?v=17"></script>
+<script src="subs-view.js?v=17"></script>
 </body>
 </html>

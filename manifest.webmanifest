@@ -1,11 +1,11 @@
 {
-  "name": "Spend Log",
-  "short_name": "Spend Log",
-  "description": "Private daily spending log, encrypted on this phone.",
+  "name": "Tally",
+  "short_name": "Tally",
+  "description": "Every purchase, receipt, return and bill. Encrypted on your phone.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#e9eeec",
+  "background_color": "#1f4fd8",
   "theme_color": "#e9eeec",
   "icons": [
     {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},

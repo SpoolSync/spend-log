@@ -1,4 +1,4 @@
-/* Spend Log: subscription watcher and warranty reminders.
+/* Tally: subscription watcher and warranty reminders.
    Subscriptions are found from what you've logged: the same place charging a similar amount on a steady
    rhythm (weekly, monthly, quarterly or yearly). Nothing is sent anywhere; it all runs on the phone.
    Kept in its own file; the main app calls SubWatch.detect / viewSubs / viewWarranty and the alert helpers. */

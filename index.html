@@ -10,11 +10,11 @@
 <link rel="icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Spend Log">
+<meta name="apple-mobile-web-app-title" content="Tally">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#e9eeec" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0e161a" media="(prefers-color-scheme: dark)">
-<title>Spend Log</title>
+<title>Tally</title>
 <style>
 /* Layout idea: one phone-width column. A daily check-in on top, then the month printed as a till receipt, then the working tabs. */
 :root{
@@ -236,13 +236,153 @@ button.status.warn{color:var(--impulse)}
 #tape{order:2}#view{order:1}.top,#pxslot,#checkin,#alerts{order:0}
 #pxslot[hidden]{display:none}
 .pxcard{border:2px solid var(--accent)}
+/* ===== Tally refresh: softer cards, category colours, sheets ===== */
+:root{
+  --c-groceries:#1b8a57;--c-eating:#d0611a;--c-transport:#2563c9;--c-housing:#7a4fd0;--c-subs:#0d8797;
+  --c-shopping:#c2387a;--c-health:#d2384a;--c-fun:#b07d06;--c-work:#4b5d6b;--c-other:#6f7c7f;--c-unsorted:#8a9597;
+  --radius:16px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --c-groceries:#4cc98a;--c-eating:#f2925a;--c-transport:#6f9cf5;--c-housing:#ad8cf5;--c-subs:#3dc2d1;
+    --c-shopping:#f07ab0;--c-health:#f2737f;--c-fun:#e5b53c;--c-work:#9fb1bd;--c-other:#9aa7a9;--c-unsorted:#8a9597;
+  }
+}
+:root[data-theme="dark"]{
+  --c-groceries:#4cc98a;--c-eating:#f2925a;--c-transport:#6f9cf5;--c-housing:#ad8cf5;--c-subs:#3dc2d1;
+  --c-shopping:#f07ab0;--c-health:#f2737f;--c-fun:#e5b53c;--c-work:#9fb1bd;--c-other:#9aa7a9;--c-unsorted:#8a9597;
+}
+svg{fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+
+/* header */
+.top{align-items:center;flex-wrap:nowrap}
+h1{font-family:var(--display);font-size:30px;letter-spacing:-.01em}
+button.status,.status{display:inline-flex;align-items:center;gap:6px;font-family:var(--body);font-size:12px;font-weight:600;border:1px solid var(--line);border-radius:999px;padding:6px 11px;color:var(--muted);background:var(--tape);white-space:nowrap;min-height:32px;flex:none}
+.status .sdot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.status.ok .sdot{background:var(--need)}
+.status.busy .sdot{background:var(--accent)}
+.status.local .sdot{background:var(--want)}
+.status.warn{color:var(--impulse);border-color:var(--impulse)}
+.status.warn .sdot{background:var(--impulse)}
+.applogo{width:56px;height:56px;border-radius:14px;display:block;margin-bottom:6px}
+
+/* buttons */
+.btn{border-color:var(--line);border-radius:12px;color:inherit;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+.btn.primary{box-shadow:0 1px 0 rgba(0,0,0,.06)}
+.btn.sm{min-height:36px;padding:6px 12px;font-size:14px}
+.btn.wide{width:100%;min-height:50px;font-size:17px}
+.btn svg{width:20px;height:20px}
+@media (prefers-reduced-motion:no-preference){.btn,.chip,.catopt,.payopt,.rowmain,.alert,.mrow{transition:transform .08s ease}.btn:active:not(:disabled),.catopt:active,.payopt:active,.alert:active,.mrow:active{transform:scale(.97)}}
+
+/* home hero */
+.checkin{border:0;padding:0;background:none;gap:12px}
+.hero{border-radius:20px;padding:20px 20px 18px;color:#fff;background:linear-gradient(160deg,#2d5ff0,#1a3fb8);box-shadow:0 10px 28px rgba(26,63,184,.25);display:flex;flex-direction:column;gap:4px}
+.hlabel{margin:0;font-size:14px;font-weight:600;opacity:.85}
+.hamt{margin:0;font-family:var(--display);font-size:46px;font-weight:700;line-height:1.05;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.hbits{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.hpill{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:600;background:rgba(255,255,255,.16);border-radius:999px;padding:5px 10px}
+.hpill svg{width:14px;height:14px;stroke-width:2.4}
+.hpill.up{background:rgba(255,120,100,.28)}
+.weekcard{background:var(--tape);border:1px solid var(--line);border-radius:var(--radius);padding:14px;display:flex;flex-direction:column;gap:12px}
+.todayrow{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.todayrow .ttl,.emptystate .ttl{margin:0;font-weight:700}
+.todayrow .small{margin:2px 0 0}
+.day{border:0;background:var(--paper);border-radius:12px;padding:7px 0 9px;font-family:var(--body);font-weight:600}
+.day.today{box-shadow:inset 0 0 0 2px var(--accent);color:var(--accent)}
+.day.missed .dot{border-color:var(--want)}
+.card{border-radius:var(--radius)}
+.alert{border-radius:12px;border-left-width:4px}
+
+/* purchase rows */
+.row{padding:12px 0;gap:8px;border-bottom:1px solid var(--line)}
+.row.gone{opacity:.6}
+.rowmain{grid-template-columns:40px 1fr auto;align-items:center;gap:12px;border-radius:12px}
+.rtx{display:flex;flex-direction:column;min-width:0}
+.rtx .what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rtx .meta{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.amt{font-family:var(--body);font-size:16px;font-weight:700}
+.row>.chips,.row>.items{padding-left:52px}
+.dayhead{border-bottom:1px solid var(--line);color:var(--muted);margin-top:14px}
+.cic{width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--c-unsorted);background:color-mix(in srgb,currentColor 14%,transparent)}
+.cic svg{width:22px;height:22px}
+.cat-groceries{color:var(--c-groceries)}.cat-eating{color:var(--c-eating)}.cat-transport{color:var(--c-transport)}.cat-housing{color:var(--c-housing)}.cat-subs{color:var(--c-subs)}
+.cat-shopping{color:var(--c-shopping)}.cat-health{color:var(--c-health)}.cat-fun{color:var(--c-fun)}.cat-work{color:var(--c-work)}.cat-other{color:var(--c-other)}
+.cat-other svg{stroke-width:3.4}
+
+/* chips: sentence case pills */
+.chip{font-family:var(--body);font-size:12.5px;font-weight:600;text-transform:none;letter-spacing:0;border-radius:999px;padding:4px 10px;display:inline-flex;align-items:center;gap:5px;margin-left:0}
+.chip svg{width:14px;height:14px}
+.chip.act{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.chip.miss{border-style:dashed}
+.items summary{font-family:var(--body);text-transform:none;letter-spacing:0;font-size:13px;font-weight:600;color:var(--accent)}
+.monthsum{margin:0;text-align:center;color:var(--muted);font-size:14px}
+.emptystate{text-align:center;padding:36px 16px;border:1px dashed var(--line);border-radius:var(--radius);display:flex;flex-direction:column;gap:4px}
+#view>h2{font-size:19px}
+input[type=search]{border-radius:12px}
+
+/* bottom sheets */
+dialog.sheet{width:100%;max-width:640px;margin:auto auto 0;border-radius:22px 22px 0 0;max-height:94vh;max-height:94dvh;overscroll-behavior:contain}
+dialog.sheet .form{padding:0 16px;gap:16px}
+@media (min-width:700px){dialog.sheet{margin:auto;border-radius:22px}}
+@media (prefers-reduced-motion:no-preference){dialog.sheet[open]{animation:sheetUp .3s cubic-bezier(.2,.8,.2,1)}}
+@keyframes sheetUp{from{transform:translateY(60px);opacity:.4}to{transform:none;opacity:1}}
+.sheethead{position:sticky;top:0;z-index:3;display:grid;grid-template-columns:40px 1fr 40px;align-items:center;gap:8px;padding:12px 0 8px;background:var(--tape)}
+.sheethead::before{content:"";position:absolute;left:50%;top:5px;width:36px;height:4px;border-radius:2px;background:var(--line);transform:translateX(-50%)}
+.sheethead h2{font-size:17px;text-align:center;margin:0}
+.iconbtn{width:40px;height:40px;border-radius:50%;border:0;background:var(--paper);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.iconbtn svg{width:20px;height:20px;stroke-width:2.2}
+.iconbtn.ghost{background:none}
+.sheetfoot{position:sticky;bottom:0;z-index:3;background:var(--tape);padding:10px 0 calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.footrow{display:flex;gap:8px}
+.footrow .btn{flex:1}
+.footrow .btn[hidden]{display:none}
+.amountbox{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 0 2px}
+.amountbox label{font-size:13px;font-weight:600;color:var(--muted)}
+.amtwrap{display:flex;align-items:baseline;justify-content:center;gap:2px}
+.amtwrap .cur{font-family:var(--display);font-size:34px;font-weight:700;color:var(--muted)}
+.amountbox input[type=number]{font-family:var(--display);font-size:46px;font-weight:700;text-align:center;border:0;background:transparent;padding:0;min-height:0;width:7ch;font-variant-numeric:tabular-nums;-moz-appearance:textfield}
+.amountbox input::-webkit-outer-spin-button,.amountbox input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.amountbox input:focus{outline:none}
+.amountbox:focus-within .amtwrap{box-shadow:0 2px 0 var(--accent)}
+.catgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.catopt{display:flex;flex-direction:column;align-items:center;gap:5px;border:1px solid var(--line);background:transparent;border-radius:14px;padding:9px 2px 8px;font:inherit;font-size:11.5px;font-weight:600;color:var(--ink);cursor:pointer;min-height:72px;line-height:1.15;text-align:center}
+.catopt .cic{width:34px;height:34px;border-radius:10px}
+.catopt .cic svg{width:20px;height:20px}
+.catopt[aria-checked="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.paypick{display:flex;flex-wrap:wrap;gap:8px}
+.payopt{border:1px solid var(--line);background:transparent;border-radius:999px;padding:8px 14px;font:inherit;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;min-height:40px}
+.payopt[aria-checked="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.seg label{border-radius:12px}
+.seg label:has(input:checked){border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.photobtns{display:flex;gap:8px;flex-wrap:wrap}
+.btn.photo{border-style:dashed;border-width:1.5px;flex:1;min-height:52px}
+.btn.photo[hidden],.linkbtn[hidden]{display:none}
+.linkbtn{display:inline-flex;align-items:center;min-height:36px;color:var(--accent);font-weight:600;font-size:14px;cursor:pointer;align-self:flex-start}
+.preview{border-radius:12px}
+details.more{border:1px solid var(--line);border-radius:14px;padding:0 14px}
+details.more>summary{cursor:pointer;font-weight:600;padding:14px 0;list-style-position:inside}
+details.more[open]{padding-bottom:14px}
+details.more[open]>summary{margin-bottom:6px}
+details.more .field+.field{margin-top:14px}
+
+.lockcard{border:1px solid var(--line);border-radius:22px;box-shadow:0 12px 40px rgba(20,35,42,.10);padding:26px 20px}
+#f-cancel{display:none}
+.footrow:not(:has(.btn:not([hidden]):not(#f-cancel))){display:none}
+.amountbox input[type=number]{text-align:left}
+/* chooser */
+#chooseDlg .form{padding-top:18px;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
+.choice{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper)}
+.choice .ct{display:flex;align-items:center;gap:10px}
+.choice .ct svg{width:24px;height:24px;color:var(--accent)}
+.pick{border-radius:12px}
+
 </style>
 </head>
 <body>
 <section class="lock" id="lock">
   <div class="lockcard">
-    <p class="eyebrow">Spend Log</p>
-    <h1 id="lockTitle">Spend Log</h1>
+    <img class="applogo" src="icon-192.png" alt=""><p class="eyebrow">Tally</p>
+    <h1 id="lockTitle">Tally</h1>
     <p class="muted" id="lockSub"></p>
     <form id="lockForm" novalidate>
       <div class="field"><label for="l-pass" id="l-passLabel">Passcode</label><input type="password" id="l-pass" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
@@ -257,9 +397,9 @@ button.status.warn{color:var(--impulse)}
 </section>
 <section class="lock" id="acct" hidden>
   <div class="lockcard">
-    <p class="eyebrow">Spend Log · Pixora</p>
+    <img class="applogo" src="icon-192.png" alt=""><p class="eyebrow">Tally · Pixora</p>
     <h1>Sign in</h1>
-    <p class="muted">Use your Pixora account to keep Spend Log backed up and on all your phones. Your data is encrypted on your phone before it's uploaded, so nobody else can read it. Receipt photos stay on your phone.</p>
+    <p class="muted">Use your Pixora account to keep Tally backed up and on all your phones. Your data is encrypted on your phone before it's uploaded, so nobody else can read it. Receipt photos stay on your phone.</p>
     <div id="acctBody" style="display:flex;flex-direction:column;gap:14px"></div>
   </div>
 </section>
@@ -267,7 +407,7 @@ button.status.warn{color:var(--impulse)}
   <header class="top">
     <div>
       <p class="eyebrow" id="todayLabel"></p>
-      <h1>Spend Log</h1>
+      <h1 id="pageTitle">Tally</h1>
     </div>
     <button type="button" class="status" id="saveStatus">Encrypted on this phone</button>
   </header>
@@ -287,22 +427,21 @@ button.status.warn{color:var(--impulse)}
   <button type="button" class="nb" data-nav="more"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>More</span><b class="badge" hidden></b></button>
 </nav>
 
-<dialog id="entryDlg" aria-labelledby="entryTitle">
+<dialog id="entryDlg" class="sheet" aria-labelledby="entryTitle">
   <form class="form" id="entryForm" novalidate>
-    <h2 id="entryTitle">Log a purchase</h2>
+    <div class="sheethead">
+      <button type="button" class="iconbtn" id="f-x" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <h2 id="entryTitle">Log a purchase</h2>
+      <span class="iconbtn ghost" aria-hidden="true"></span>
+    </div>
     <p class="bank" id="f-bank" hidden></p>
+    <div class="amountbox"><label for="f-amount">Amount</label><div class="amtwrap"><span class="cur" aria-hidden="true">$</span><input type="number" id="f-amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00"></div></div>
     <div class="field"><label for="f-what">What did you buy?</label><input type="text" id="f-what" maxlength="120" placeholder="Lunch, phone bill, brake pads" autocomplete="off"></div>
-    <div class="two">
-      <div class="field"><label for="f-amount">How much?</label><input type="number" id="f-amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00"></div>
-      <div class="field"><label for="f-where">Where?</label><input type="text" id="f-where" maxlength="80" placeholder="Store or company" autocomplete="off"></div>
-    </div>
-    <div class="two">
-      <div class="field"><label for="f-date">When?</label><input type="date" id="f-date"></div>
-      <div class="field"><label for="f-time">Time</label><input type="time" id="f-time"></div>
-    </div>
-    <div class="two">
-      <div class="field"><label for="f-cat">Category</label><select id="f-cat"></select></div>
-      <div class="field"><label for="f-pay">Paid with</label><select id="f-pay"></select></div>
+    <div class="field"><label for="f-where">Where?</label><input type="text" id="f-where" maxlength="80" placeholder="Store or company" autocomplete="off"></div>
+    <div class="field">
+      <span class="lab" id="catLab">Category</span>
+      <div class="catgrid" id="catPick" role="radiogroup" aria-labelledby="catLab"></div>
+      <select id="f-cat" class="vh" tabindex="-1" aria-hidden="true"></select>
     </div>
     <div class="field">
       <span class="lab" id="whyLab">Why?</span>
@@ -311,47 +450,68 @@ button.status.warn{color:var(--impulse)}
         <label><input type="radio" name="why" id="f-why-want" value="want"><span>Want</span></label>
         <label><input type="radio" name="why" id="f-why-impulse" value="impulse"><span>Impulse</span></label>
       </div>
-      <input type="text" id="f-note" maxlength="200" placeholder="The reason, in your words" aria-label="Reason in your words" autocomplete="off">
+      <input type="text" id="f-note" maxlength="200" placeholder="The reason, in your words (optional)" aria-label="Reason in your words" autocomplete="off">
+    </div>
+    <div class="two">
+      <div class="field"><label for="f-date">Date</label><input type="date" id="f-date"></div>
+      <div class="field"><label for="f-time">Time</label><input type="time" id="f-time"></div>
+    </div>
+    <div class="field">
+      <span class="lab" id="payLab">Paid with</span>
+      <div class="paypick" id="payPick" role="radiogroup" aria-labelledby="payLab"></div>
+      <select id="f-pay" class="vh" tabindex="-1" aria-hidden="true"></select>
     </div>
     <div class="field" id="receiptField">
-      <label for="f-receipt">Receipt or bill</label>
-      <input type="file" id="f-receipt" accept="image/*">
+      <span class="lab">Receipt</span>
       <img class="preview" id="f-preview" alt="Receipt preview" hidden>
+      <div class="photobtns">
+        <label class="btn photo" id="f-photoBtn" for="f-receipt"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg><span id="f-photoLab">Add receipt photo</span></label>
+        <button type="button" class="btn quiet" id="f-view" hidden>View receipt</button>
+      </div>
+      <input type="file" id="f-receipt" accept="image/*" class="vh">
       <p class="note" id="f-receiptNote"></p>
-      <label for="f-receipt2">Second photo, for the bottom of a long receipt or its barcode</label>
-      <input type="file" id="f-receipt2" accept="image/*">
+      <label class="linkbtn" id="f-photo2Btn" for="f-receipt2"><span id="f-photo2Lab">Second photo (long receipt)</span></label>
+      <input type="file" id="f-receipt2" accept="image/*" class="vh">
       <p class="note" id="f-receipt2Note"></p>
       <button type="button" class="btn quiet" id="f-read" hidden>Read this receipt on the phone</button>
       <label class="check" for="f-noreceipt"><input type="checkbox" id="f-noreceipt"> No receipt for this one</label>
     </div>
-    <div class="field">
-      <label for="f-items">Items on the receipt, one per line: item ID | name | price | category</label>
-      <textarea id="f-items" spellcheck="false" autocapitalize="off" placeholder="1342746 | ORANGES | 8.99 | Groceries"></textarea>
-    </div>
-    <div class="field">
-      <label for="f-return">Might return it? Return by</label>
-      <input type="date" id="f-return">
-      <label class="check" for="f-returnAny"><input type="checkbox" id="f-returnAny"> Returnable any time</label>
-      <label for="f-warranty">Warranty until</label>
-      <input type="date" id="f-warranty">
-      <div class="btnrow" style="margin-top:-4px"><button type="button" class="btn quiet mini" id="f-w1">+1 year</button><button type="button" class="btn quiet mini" id="f-w2">+2 years</button><button type="button" class="btn quiet mini" id="f-w0">None</button></div>
-      <div class="chips"><button type="button" class="chip" id="f-ret30">30 days</button><button type="button" class="chip" id="f-ret90">90 days</button><button type="button" class="chip" id="f-ret0">Clear</button></div>
-      <p class="note" id="f-returnNote"></p>
-    </div>
+    <details class="more" id="f-more">
+      <summary>Items, return window and warranty</summary>
+      <div class="field">
+        <label for="f-return">Return by</label>
+        <input type="date" id="f-return">
+        <label class="check" for="f-returnAny"><input type="checkbox" id="f-returnAny"> Returnable any time</label>
+        <div class="chips"><button type="button" class="chip" id="f-ret30">30 days</button><button type="button" class="chip" id="f-ret90">90 days</button><button type="button" class="chip" id="f-ret0">Clear</button></div>
+        <p class="note" id="f-returnNote"></p>
+      </div>
+      <div class="field">
+        <label for="f-warranty">Warranty until</label>
+        <input type="date" id="f-warranty">
+        <div class="chips"><button type="button" class="chip" id="f-w1">+1 year</button><button type="button" class="chip" id="f-w2">+2 years</button><button type="button" class="chip" id="f-w0">None</button></div>
+      </div>
+      <div class="field">
+        <label for="f-items">Items, one per line: item ID | name | price | category</label>
+        <textarea id="f-items" spellcheck="false" autocapitalize="off" placeholder="1342746 | ORANGES | 8.99 | Groceries"></textarea>
+      </div>
+    </details>
     <p class="err" id="f-err" role="alert" hidden></p>
-    <div class="btnrow">
-      <button type="submit" class="btn primary" id="f-save">Save purchase</button>
-      <button type="button" class="btn quiet" id="f-cancel">Cancel</button>
-      <button type="button" class="btn danger" id="f-delete" hidden>Delete</button>
+    <div class="sheetfoot">
+      <button type="submit" class="btn primary wide" id="f-save">Save purchase</button>
+      <div class="footrow">
+        <button type="button" class="btn quiet" id="f-cancel">Cancel</button>
+        <button type="button" class="btn quiet" id="f-again" hidden>Log again</button>
+        <button type="button" class="btn danger" id="f-delete" hidden>Delete</button>
+      </div>
     </div>
   </form>
 </dialog>
 
-<dialog id="chooseDlg" aria-labelledby="chooseTitle">
+<dialog id="chooseDlg" class="sheet" aria-labelledby="chooseTitle">
   <div class="form">
     <h2 id="chooseTitle">Log a purchase</h2>
-    <label class="choice" for="scanFile"><input type="file" id="scanFile" accept="image/*" class="vh"><span class="ct">Scan a receipt</span><span class="cd">Take or pick a photo. The phone reads the store, total and every item from the photo. You check it, then save. The photo is kept.</span></label>
-    <button type="button" class="choice" id="chooseManual"><span class="ct">Enter it myself</span><span class="cd">Type what, how much and why. Add a receipt photo later, or never.</span></button>
+    <label class="choice" for="scanFile"><input type="file" id="scanFile" accept="image/*" class="vh"><span class="ct"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>Scan a receipt</span><span class="cd">Take or pick a photo. Tally reads the store, total and every item on the phone, then you check and save. The photo stays on your phone.</span></label>
+    <button type="button" class="choice" id="chooseManual"><span class="ct"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg>Type it in</span><span class="cd">What, how much and why. Add a receipt photo later, or never.</span></button>
     <div class="recent" id="recentPicks" hidden></div>
     <div class="btnrow"><button type="button" class="btn quiet" id="chooseCancel">Cancel</button></div>
   </div>
@@ -407,11 +567,11 @@ button.status.warn{color:var(--impulse)}
 <script src="firebase-app-compat.js"></script>
 <script src="firebase-auth-compat.js"></script>
 <script src="firebase-firestore-compat.js"></script>
-<script src="cloud.js"></script>
-<script src="pixora-summary.js"></script>
-<script src="pixora-usage.js"></script>
-<script src="subs.js"></script>
-<script src="app.js"></script>
-<script src="subs-view.js"></script>
+<script src="cloud.js?v=15"></script>
+<script src="pixora-summary.js?v=15"></script>
+<script src="pixora-usage.js?v=15"></script>
+<script src="subs.js?v=15"></script>
+<script src="app.js?v=15"></script>
+<script src="subs-view.js?v=15"></script>
 </body>
 </html>

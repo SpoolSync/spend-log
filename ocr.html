@@ -5,10 +5,10 @@
 <!-- This frame only reads text from receipt photos. The image library it uses needs 'unsafe-eval', so it is kept apart from the main app page, which does not allow it. Nothing here can reach the network beyond this site's own files. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; img-src 'self' blob: data:; connect-src 'self' data:; style-src 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
-<title>Spend Log receipt reader</title>
+<title>Tally receipt reader</title>
 </head>
 <body>
 <script src="ppocr.js"></script>
-<script src="ocr-frame.js"></script>
+<script src="ocr-frame.js?v=15"></script>
 </body>
 </html>

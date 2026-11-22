@@ -1,4 +1,4 @@
-/* Spend Log screens for subscriptions and warranties. Uses the main app's helpers (h, money, S, store...). */
+/* Tally screens for subscriptions and warranties. Uses the main app's helpers (h, money, S, store...). */
 (function(){
 "use strict";
 function subs(){return SubWatch.detect(S.entries,today());}
@@ -35,7 +35,7 @@ window.warrantyMoreRow=function(){
 
 window.viewSubs=function(v){
   var s=subs(),m=0,y=0;s.forEach(function(x){m+=x.monthly;y+=x.yearly;});
-  v.append(h("h2",{text:"Subscriptions"}));
+
   if(!s.length){v.append(h("div",{class:"empty"},h("p",{text:"None found yet. Subscriptions show up here once the same place has charged you on a steady rhythm, at least twice for monthly or yearly ones. Bank imports fill this in fastest."})));return;}
   v.append(h("div",{class:"panel"},h("p",{class:"small muted",text:"Roughly, every month"}),h("p",{style:"font-size:30px;font-weight:700;margin:0",text:money(m)}),
     h("p",{class:"small muted",text:money(y)+" a year across "+s.length+(s.length===1?" subscription":" subscriptions")+". Worked out from your logged charges; amounts can drift."})));
@@ -63,7 +63,7 @@ window.viewSubs=function(v){
 };
 window.viewWarranty=function(v){
   var w=warranties().sort(function(a,b){return a.warrantyUntil.localeCompare(b.warrantyUntil);}),live=w.filter(function(e){return daysLeft(e.warrantyUntil)>=0;}),past=w.filter(function(e){return daysLeft(e.warrantyUntil)<0;});
-  v.append(h("h2",{text:"Warranties"}));
+
   if(!w.length){v.append(h("div",{class:"empty"},h("p",{text:"Open any purchase and set \"Warranty until\". You'll get a reminder 30 days before it runs out, and the receipt photo stays with it for the claim."})));return;}
   function row(e){var d=daysLeft(e.warrantyUntil);return h("button",{type:"button",class:"mrow",onclick:function(){openEntry(e);}},
     h("span",{class:"mtx"},h("span",{class:"mt",text:title(e)}),h("span",{class:"ms",text:(d<0?"Ended ":d===0?"Ends today · ":"Until ")+dl(e.warrantyUntil)+(d>0?" · "+(d<=60?d+" days left":Math.round(d/30.4)+" months left"):"")+(e.where?" · "+e.where:"")})),

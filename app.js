@@ -287,16 +287,14 @@ function render(){
   var pc=pxCard();if(pc)slot.append(pc);slot.hidden=!pc;
   $("checkin").hidden=!home;$("tape").hidden=!home;
   if(home){renderCheckin();renderAlerts();renderTape();}else $("alerts").hidden=true;
-  renderNav();renderView();
+  paintTitle();renderNav();renderView();
 }
 
 function renderCheckin(){
   var box=$("checkin");box.textContent="";
   var t=today(),mine=S.entries.filter(function(e){return e.date===t;}),ns=!!(S.days[t]&&S.days[t].noSpend);
-  var head=mine.length?mine.length+(mine.length===1?" purchase":" purchases")+" logged today":ns?"Today is marked as a no-spend day":"What did you spend today?";
-  var sub=mine.length?money(sum(mine))+" so far. Anything else?":ns?"Bought something after all? Log it and this clears.":"List every purchase: what, how much, where, why, and the receipt.";
-  box.append(h("div",null,h("h2",{text:head}),h("p",{class:"muted",text:sub,style:"margin-top:4px"})));
-
+  box.append(heroCard());
+  var todayTxt=mine.length?money(sum(mine))+" today · "+mine.length+(mine.length===1?" purchase":" purchases"):ns?"No-spend day today":"Nothing logged today yet";
   var week=h("div",{class:"week"}),missed=[];
   for(var i=6;i>=0;i--){
     (function(i){
@@ -310,17 +308,14 @@ function renderCheckin(){
         onclick:function(){openChooser(ds);}},h("span",{text:lab}),h("span",{class:"dot"})));
     })(i);
   }
-  box.append(week);
-  if(S.ready&&missed.length)box.append(h("p",{class:"small",style:"color:var(--impulse);font-weight:600",text:"Nothing logged for "+missed.join(", ")+". Tap a day to fill it in."}));
-
   var streak=0,c=new Date();if(!covered(iso(c)))c.setDate(c.getDate()-1);
   while(streak<400&&covered(iso(c))){streak++;c.setDate(c.getDate()-1);}
-  var row=h("div",{class:"btnrow"});
-  row.append(h("button",{type:"button",class:"btn primary",disabled:!S.ready,text:"Log a purchase",onclick:function(){openChooser(today());}}));
-  if(!mine.length&&!ns)row.append(h("button",{type:"button",class:"btn quiet",disabled:!S.ready,text:"Nothing spent today",onclick:function(){guard(store.setNoSpend(t,true));}}));
-  if(ns&&!mine.length)row.append(h("button",{type:"button",class:"btn quiet",text:"Undo no-spend",onclick:function(){guard(store.setNoSpend(t,false));}}));
-  box.append(row);
-  if(streak>1)box.append(h("p",{class:"small muted mono",text:streak+" days in a row accounted for"}));
+  var tr=h("div",{class:"todayrow"},h("div",null,h("p",{class:"ttl",text:todayTxt}),
+    h("p",{class:"small muted",text:missed.length?(missed.length===1?missed[0]+" has":missed.slice(0,-1).join(", ")+" and "+missed[missed.length-1]+" have")+" nothing logged. Tap a day to fill it in.":streak>1?streak+" days in a row accounted for. Nice.":"Tap a day to log something for it."})));
+  if(!S.entries.length)tr.append(h("button",{type:"button",class:"btn primary sm",disabled:!S.ready,text:"Log first purchase",onclick:function(){openChooser(today());}}));
+  else if(!mine.length&&!ns)tr.append(h("button",{type:"button",class:"btn quiet sm",disabled:!S.ready,text:"Nothing spent",onclick:function(){T("no_spend");guard(store.setNoSpend(t,true));}}));
+  else if(ns&&!mine.length)tr.append(h("button",{type:"button",class:"btn quiet sm",text:"Undo",onclick:function(){guard(store.setNoSpend(t,false));}}));
+  box.append(h("div",{class:"weekcard"},tr,week));
 }
 function guard(p){p.catch(function(e){toast(saveErr(e));});}
 
@@ -380,37 +375,33 @@ function renderTabs(){
   });
 }
 
-function entryRow(e){
+function entryRow(e,ctx){
   var metaBits=[];
-  if(e.what&&e.where)metaBits.push(e.where);
-  if(e.category)metaBits.push(CATNAME[e.category]||e.category);
-  if(e.pay)metaBits.push(e.pay);
+  if(e.what&&e.where)metaBits.push(e.where);else if(e.category)metaBits.push(CATNAME[e.category]||e.category);
   if(e.time)metaBits.push(e.time);
+  if(e.why==="want"||e.why==="impulse")metaBits.push(WHYNAME[e.why]);
   if(e.note)metaBits.push("“"+e.note+"”");
-  var chips=h("div",{class:"chips"});
-  if(WHYNAME[e.why])chips.append(h("span",{class:"chip "+e.why,text:WHYNAME[e.why]}));
+  var inRet=ctx==="returns",chips=h("div",{class:"chips"});
   var back=refunded(e),gone=fullyReturned(e),canReturn=!gone&&(e.returnAny||(e.returnBy&&daysLeft(e.returnBy)>=0));
-  if(back>0)chips.append(h("span",{class:"chip need",text:(gone?"Returned":"Part returned")+" · "+money(back)+" back"}));
-  if(e.ret)chips.append(h("button",{type:"button",class:"chip",text:"Change return",onclick:function(){openReturn(e,-1);}}));
-  if(canReturn)chips.append(h("button",{type:"button",class:"chip has",text:(e.items&&e.items.length)?"Return everything":"Mark as returned",onclick:function(){openReturn(e,-1);}}));
-  if(!gone&&e.returnAny)chips.append(h("span",{class:"chip need",text:"Returnable any time"}));
-  if(!gone&&e.returnBy){var dl=daysLeft(e.returnBy);chips.append(h("span",{class:"chip "+(dl<0?"":dl<=7?"impulse":"need"),text:dl<0?"Return window closed":"Return by "+dayLabel(e.returnBy)+" · "+dl+(dl===1?" day left":" days left")}));}
-  if(e.scanned)chips.append(h("button",{type:"button",class:"chip want",text:"Scanned: check it",onclick:function(){openEntry(e);}}));
-  if(!e.needsDetails&&!e.billId&&e.what)chips.append(h("button",{type:"button",class:"chip",text:"Log again","aria-label":"Log "+title(e)+" again",onclick:function(){logAgain(e);}}));
   if(e.needsDetails)chips.append(h("button",{type:"button",class:"chip miss",text:"Add details",onclick:function(){openEntry(e);}}));
-  if(e.receiptId){
-    chips.append(h("button",{type:"button",class:"chip has",text:e.receiptId2?"View receipt (2 photos)":"View receipt",onclick:function(){showReceipt(e.receiptId,e.receiptId2);}}));
-  }else if(e.noReceipt)chips.append(h("span",{class:"chip",text:"No receipt"}));
-  else chips.append(h("button",{type:"button",class:"chip miss",text:"Receipt missing",onclick:function(){openEntry(e);}}));
-  return h("div",{class:"row"},
-    h("button",{type:"button",class:"rowmain","aria-label":"Edit "+title(e),onclick:function(){openEntry(e);}},
-      h("span",{class:"what",text:title(e)}),h("span",{class:"amt",text:money(net(e))}),
-      metaBits.length?h("span",{class:"meta",text:metaBits.join(" · ")}):null),
-    chips,itemsBlock(e));
+  if(e.scanned)chips.append(h("button",{type:"button",class:"chip want",text:"Scanned · check it",onclick:function(){openEntry(e);}}));
+  if(back>0)chips.append(h("span",{class:"chip need",text:(gone?"Returned":"Part returned")+" · "+money(back)+" back"}));
+  if(!gone&&e.returnBy){var dl=daysLeft(e.returnBy);if(dl>=0&&(inRet||dl<=14))chips.append(h("span",{class:"chip "+(dl<=7?"impulse":"need"),text:dl===0?"Last day to return":"Return by "+dayLabel(e.returnBy).replace(/^\w+, /,"")+" · "+dl+(dl===1?" day":" days")}));}
+  if(inRet&&!gone&&e.returnAny)chips.append(h("span",{class:"chip need",text:"Returnable any time"}));
+  if(inRet&&canReturn)chips.append(h("button",{type:"button",class:"chip act",text:(e.items&&e.items.length)?"Return everything":"Mark as returned",onclick:function(){openReturn(e,-1);}}));
+  if(inRet&&e.ret)chips.append(h("button",{type:"button",class:"chip",text:"Change return",onclick:function(){openReturn(e,-1);}}));
+  if(e.receiptId)chips.append(h("button",{type:"button",class:"chip has",onclick:function(){showReceipt(e.receiptId,e.receiptId2);}},svgI(ICON.receipt),e.receiptId2?"Receipt · 2 photos":"Receipt"));
+  else if(inRet&&!e.noReceipt)chips.append(h("button",{type:"button",class:"chip miss",text:"Add the receipt",onclick:function(){openEntry(e);}}));
+  return h("div",{class:"row"+(gone?" gone":"")},
+    h("button",{type:"button",class:"rowmain","aria-label":"Edit "+title(e)+", "+money(net(e))+", "+(CATNAME[e.category]||"no category"),onclick:function(){openEntry(e);}},
+      catIcon(e.category),
+      h("span",{class:"rtx"},h("span",{class:"what",text:title(e)}),metaBits.length?h("span",{class:"meta",text:metaBits.join(" · ")}):null),
+      h("span",{class:"amt",text:money(net(e))})),
+    chips.childNodes.length?chips:null,itemsBlock(e));
 }
 function itemsBlock(e){
   if(!Array.isArray(e.items)||!e.items.length)return null;
-  var d=h("details",{class:"items",open:!!(S.q&&S.q.trim())},h("summary",{text:e.items.length+(e.items.length===1?" line":" lines")+" from the receipt"}));
+  var d=h("details",{class:"items",open:!!(S.q&&S.q.trim())},h("summary",{text:e.items.length+(e.items.length===1?" item":" items")+" on the receipt"}));
   e.items.forEach(function(it,k){var c=+it.cost||0;
     d.append(h("div",{class:"ln mono small"},h("span",{class:"k",text:(it.id?it.id+"  ":"")+(it.name||"Item")+(it.cat?"  ·  "+CATNAME[it.cat]:"")}),h("span",{class:"lead"}),h("span",{text:(c<0?"−":"")+money(Math.abs(c))}),retBtn(e,it,k)));});
   return d;
@@ -449,7 +440,8 @@ function fillLog(v){
     h("button",{type:"button",class:"mnav","aria-label":"Previous month",text:"‹",onclick:function(){S.month=shiftMonth(S.month,-1);render();}}),
     h("h2",{text:monthLabel(S.month)}),
     h("button",{type:"button",class:"mnav","aria-label":"Next month",text:"›",disabled:isNow,onclick:function(){S.month=shiftMonth(S.month,1);render();}})));
-    if(list.length)v.append(h("p",{class:"small muted mono",text:list.length+(list.length===1?" purchase · ":" purchases · ")+money(sum(list))}));}
+    if(list.length)v.append(h("p",{class:"monthsum",text:list.length+(list.length===1?" purchase · ":" purchases · ")+money(sum(list))}));
+    else{v.append(h("div",{class:"emptystate"},h("p",{class:"ttl",text:isNow?"Nothing logged this month yet":"Nothing logged in "+monthLabel(S.month)}),h("p",{class:"small muted",text:"Tap + to scan a receipt or type a purchase in."})));return;}}
   else v.append(h("h2",{text:list.length+(list.length===1?" match":" matches")+" across all months"}));
   if(!list.length){v.append(h("p",{class:"empty",text:q?"Nothing matches that search.":S.ready?"No purchases logged for this month yet. Use “Log a purchase” above, or bring in a bank export under Bank import.":"Loading your purchases…"}));return;}
   var cur=null;
@@ -459,7 +451,7 @@ function fillLog(v){
     v.append(entryRow(e));
   });
   var exp=h("button",{type:"button",class:"btn",text:"Export spreadsheet",onclick:function(){
-    T("export_csv_file");shareOrDownload(new Blob([csvFor(list)],{type:"text/csv"}),"spend-log-"+(q?"search":S.month)+".csv");
+    T("export_csv_file");shareOrDownload(new Blob([csvFor(list)],{type:"text/csv"}),"tally-"+(q?"search":S.month)+".csv");
   }});
   var btn=h("button",{type:"button",class:"btn quiet",text:"Copy as text",onclick:function(){
     T("export_csv_copy");
@@ -481,7 +473,7 @@ function viewInbox(v){
 
 function viewBills(v){
   var m=ym(today()),day=new Date().getDate();
-  v.append(h("h2",{text:"Recurring bills"}));
+  v.append(h("h2",{class:"sec",text:"Recurring bills"}));
   var paidOf=function(b){return S.entries.find(function(e){return e.billId===b.id&&ym(e.date||"")===m;});};
   if(S.bills.length){
     var all=S.bills.reduce(function(t,b){return t+(+b.amount||0);},0);
@@ -660,7 +652,7 @@ function openEntry(e){
   $("f-err").hidden=true;$("f-save").disabled=false;$("f-save").textContent="Save purchase";
   var del=$("f-delete");del.hidden=!editing;del.textContent="Delete";
   $("entryDlg").dataset.bill=(e&&e.billId)||"";
-  receiptCaps();
+  receiptCaps();entryOpened(e);
   $("entryDlg").showModal();
 }
 async function shrink(file){
@@ -693,7 +685,7 @@ $("f-read").addEventListener("click",async function(){
     if(r&&typeof r==="object"){
       if(r.where)$("f-where").value=String(r.where).slice(0,80);
       if(r.what&&!$("f-what").value)$("f-what").value=String(r.what).slice(0,120);
-      var a=parseFloat(r.amount);if(a>0)$("f-amount").value=a.toFixed(2);
+      var a=parseFloat(r.amount);if(a>0){$("f-amount").value=a.toFixed(2);fitAmount();}
       if(r.date&&parseDate(String(r.date)))$("f-date").value=parseDate(String(r.date));
       if(r.category&&CATNAME[r.category])$("f-cat").value=r.category;
       if(r.pay&&PAYS.indexOf(r.pay)>=0)$("f-pay").value=r.pay;
@@ -820,10 +812,10 @@ function viewReturns(v){
   v.append(h("h2",{text:"Still returnable"}));
   var anyList=S.entries.filter(function(e){return e.returnAny&&!fullyReturned(e);}).slice(0,30),backList=S.entries.filter(function(e){return refunded(e)>0;}).slice(0,30);
   if(!list.length&&!anyList.length&&!backList.length){v.append(h("p",{class:"empty",text:"Nothing with an open return window. When you log something you might take back, set its return-by date and it stays here until the deadline passes."}));return;}
-  list.forEach(function(e){v.append(h("div",{class:"dayhead"},h("span",{text:"Return by "+dayLabel(e.returnBy)}),h("span",{text:money(e.amount)})));v.append(entryRow(e));});
+  list.forEach(function(e){v.append(h("div",{class:"dayhead"},h("span",{text:"Return by "+dayLabel(e.returnBy)}),h("span",{text:money(e.amount)})));v.append(entryRow(e,"returns"));});
   if(list.length)v.append(calBtn("Add these deadlines to my calendar",returnEvents(list)));
-  if(anyList.length){v.append(h("h2",{text:"Returnable any time"}));anyList.forEach(function(e){v.append(entryRow(e));});}
-  if(backList.length){v.append(h("h2",{text:"Returned"}));backList.forEach(function(e){v.append(entryRow(e));});}
+  if(anyList.length){v.append(h("h2",{text:"Returnable any time"}));anyList.forEach(function(e){v.append(entryRow(e,"returns"));});}
+  if(backList.length){v.append(h("h2",{text:"Returned"}));backList.forEach(function(e){v.append(entryRow(e,"returns"));});}
 }
 function setReturn(n){var d=fromIso(parseDate($("f-date").value)||today());d.setDate(d.getDate()+n);$("f-return").value=iso(d);}
 $("f-ret30").addEventListener("click",function(){setReturn(30);});
@@ -993,7 +985,7 @@ async function saveFullBackup(pass){
   var plain=new Uint8Array(4+meta.length+off);new DataView(plain.buffer).setUint32(0,meta.length);
   plain.set(meta,4);var at=4+meta.length;parts.forEach(function(b){plain.set(b,at);at+=b.length;});
   var salt=rnd(16),box=await seal(await kek(pass,salt,ITER),plain);
-  await shareOrDownload(new Blob([new TextEncoder().encode(BACKUP_MAGIC),salt,box.iv,box.ct],{type:"application/octet-stream"}),"spend-log-full-backup-"+today()+".spendlog");
+  await shareOrDownload(new Blob([new TextEncoder().encode(BACKUP_MAGIC),salt,box.iv,box.ct],{type:"application/octet-stream"}),"tally-full-backup-"+today()+".spendlog");
 }
 async function openBackupFile(f){
   var buf=new Uint8Array(await f.arrayBuffer()),m=new TextEncoder().encode(BACKUP_MAGIC),isFull=buf.length>m.length+28;
@@ -1028,7 +1020,7 @@ function icsText(s){return String(s||"").replace(/\\/g,"\\\\").replace(/[,;]/g,f
 function icsDay(s){return s.replace(/-/g,"");}
 function nextDay(s){var d=fromIso(s);d.setDate(d.getDate()+1);return iso(d);}
 function makeIcs(events){
-  var stamp=new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d+/,""),L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Spend Log//EN","CALSCALE:GREGORIAN"];
+  var stamp=new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d+/,""),L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Tally//EN","CALSCALE:GREGORIAN"];
   events.forEach(function(ev){
     L.push("BEGIN:VEVENT","UID:"+ev.uid+"@spend-log","DTSTAMP:"+stamp,"DTSTART;VALUE=DATE:"+icsDay(ev.date),"DTEND;VALUE=DATE:"+icsDay(nextDay(ev.date)),"SUMMARY:"+icsText(ev.summary));
     if(ev.desc)L.push("DESCRIPTION:"+icsText(ev.desc));
@@ -1038,7 +1030,7 @@ function makeIcs(events){
   L.push("END:VCALENDAR");return L.join("\r\n")+"\r\n";
 }
 function returnEvents(list){
-  return list.map(function(e){return {uid:"return-"+e.id,date:e.returnBy,summary:"Last day to return: "+title(e),desc:(e.where?e.where+". ":"")+"Paid "+money(e.amount)+" on "+dayLabel(e.date)+". The receipt is in Spend Log.",alarmDays:2};});
+  return list.map(function(e){return {uid:"return-"+e.id,date:e.returnBy,summary:"Last day to return: "+title(e),desc:(e.where?e.where+". ":"")+"Paid "+money(e.amount)+" on "+dayLabel(e.date)+". The receipt is in Tally.",alarmDays:2};});
 }
 function billEvents(){
   var t=new Date();
@@ -1050,7 +1042,7 @@ function billEvents(){
 }
 function calBtn(label,events){
   return h("div",{class:"btnrow"},h("button",{type:"button",class:"btn quiet",text:label,onclick:function(){
-    shareOrDownload(new Blob([makeIcs(events)],{type:"text/calendar"}),"spend-log-reminders.ics");
+    shareOrDownload(new Blob([makeIcs(events)],{type:"text/calendar"}),"tally-reminders.ics");
   }}));
 }
 
@@ -1154,12 +1146,12 @@ function viewSettings(v){
     try{await changePass(cur,nw);toast("Passcode changed.");render();}
     catch(e){msg.textContent="The current passcode is wrong.";msg.hidden=false;change.disabled=false;change.textContent="Change passcode";}
   }});
-  if(vaultKind!=="pixora")v.append(h("div",{class:"panel"},h("h3",{text:"Passcode"}),h("p",{class:"small muted",text:"This phone uses its own Spend Log passcode. Sign in to a Pixora account to switch to your one Pixora passcode."}),pwField("s-cur","Current passcode","current-password"),pwField("s-new","New passcode","new-password"),pwField("s-conf","Repeat new passcode","new-password"),msg,h("div",{class:"btnrow"},change)));
+  if(vaultKind!=="pixora")v.append(h("div",{class:"panel"},h("h3",{text:"Passcode"}),h("p",{class:"small muted",text:"This phone uses its own Tally passcode. Sign in to a Pixora account to switch to your one Pixora passcode."}),pwField("s-cur","Current passcode","current-password"),pwField("s-new","New passcode","new-password"),pwField("s-conf","Repeat new passcode","new-password"),msg,h("div",{class:"btnrow"},change)));
 
   var file=h("input",{type:"file",id:"s-restore",accept:".json,.spendlog,application/json,application/octet-stream","aria-label":"Backup file to restore"});
   file.addEventListener("change",function(){
     var f=file.files&&file.files[0];if(!f)return;
-    openBackupFile(f).catch(function(){toast("That isn't a Spend Log backup file.");file.value="";});
+    openBackupFile(f).catch(function(){toast("That isn't a Tally backup file.");file.value="";});
   });
   var backup=h("div",{class:"panel"},h("h3",{text:"Backup"}),
     h("p",{class:"small muted",text:"A forgotten passcode can't be recovered, and a lost phone takes the data with it. A backup file is the only way back. Save one to iCloud Drive or email it to yourself."}),
@@ -1180,14 +1172,14 @@ function viewSettings(v){
     if(!settingsEraseArmed){settingsEraseArmed=true;render();return;}
     settingsEraseArmed=false;await eraseEverything();
   }});
-  v.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every purchase, bill, receipt photo and the passcode from this phone, and the Spend Log data in your Pixora account if you are signed in. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),h("div",{class:"btnrow"},erase)));
+  v.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every purchase, bill, receipt photo and the passcode from this phone, and the Tally data in your Pixora account if you are signed in. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),h("div",{class:"btnrow"},erase)));
 }
 async function saveBackup(){
   var json=JSON.stringify({app:"spendlog",v:1,exportedAt:new Date().toISOString(),entries:S.entries,bills:S.bills,days:S.days,budgets:S.budgets||{}});
-  var name="spend-log-backup-"+today()+".json";
+  var name="tally-backup-"+today()+".json";
   try{
     var f=new File([json],name,{type:"application/json"});
-    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:"Spend Log backup"});return;}
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:"Tally backup"});return;}
   }catch(e){if(e&&e.name==="AbortError")return;}
   var url=URL.createObjectURL(new Blob([json],{type:"application/json"}));
   var a=h("a",{href:url,download:name});document.body.append(a);a.click();a.remove();
@@ -1222,10 +1214,10 @@ function showLock(mode,problem,src){
   var px=mode==="pxset"||mode==="pxunlock",set=mode==="setup"||mode==="pxset";
   $("app").hidden=true;$("lock").hidden=false;var nb=$("navbar");if(nb)nb.hidden=true;
   $("lockTitle").textContent=mode==="pxset"?"Set your Pixora passcode":mode==="pxunlock"?"Enter your Pixora passcode":set?"Set a passcode":"Enter your passcode";
-  $("lockSub").textContent=mode==="pxset"?((pxCtx&&pxCtx.startOver)?"A new Pixora passcode for all your Pixora apps. Each app asks for it once. Spend Log starts fresh here; a phone where Spend Log is still open will put its data back.":"One passcode for Spend Log and your other Pixora apps. It locks the key that encrypts your data before it leaves the phone. You type it once per phone, and it can't be recovered, so pick one you'll remember.")
+  $("lockSub").textContent=mode==="pxset"?((pxCtx&&pxCtx.startOver)?"A new Pixora passcode for all your Pixora apps. Each app asks for it once. Tally starts fresh here; a phone where Tally is still open will put its data back.":"One passcode for Tally and your other Pixora apps. It locks the key that encrypts your data before it leaves the phone. You type it once per phone, and it can't be recovered, so pick one you'll remember.")
     :mode==="pxunlock"?((pxCtx&&pxCtx.fromCloud)?"Signed in. Enter the passcode you use in your other Pixora apps. This phone remembers it after this.":"The same passcode you use in your other Pixora apps.")
     :set?"It encrypts everything you log on this phone. It can't be recovered if you forget it, so pick one you'll remember. Six or more characters is much harder to guess.":"Your spending is encrypted on this phone.";
-  if(src==="cloud"&&!px)$("lockSub").textContent=set?"Signed in. Now set a passcode. It encrypts everything before it reaches your Pixora account, so nobody else can read it.":"Signed in. Enter the Spend Log passcode you set on your other phone. After this, Spend Log moves to your Pixora passcode.";
+  if(src==="cloud"&&!px)$("lockSub").textContent=set?"Signed in. Now set a passcode. It encrypts everything before it reaches your Pixora account, so nobody else can read it.":"Signed in. Enter the Tally passcode you set on your other phone. After this, Tally moves to your Pixora passcode.";
   $("l-passLabel").textContent=px?"Pixora passcode":"Passcode";
   $("l-confirmField").hidden=!set;
   $("l-pass").value="";$("l-confirm").value="";
@@ -1305,9 +1297,9 @@ function enterApp(){
 }
 $("l-erase").addEventListener("click",async function(){
   if(lockMode==="pxunlock"){
-    if(!eraseArmed){eraseArmed=true;this.textContent="Tap again: new Pixora passcode for all your Pixora apps. Spend Log starts over here; a phone where it's still open puts its data back.";return;}
+    if(!eraseArmed){eraseArmed=true;this.textContent="Tap again: new Pixora passcode for all your Pixora apps. Tally starts over here; a phone where it's still open puts its data back.";return;}
     if(!cuser){await cloudInit();}
-    if(!cuser){$("l-err").textContent="Sign in first: connect to the internet and reopen Spend Log.";$("l-err").hidden=false;return;}
+    if(!cuser){$("l-err").textContent="Sign in first: connect to the internet and reopen Tally.";$("l-err").hidden=false;return;}
     showLock("pxset",null,{startOver:true});return;
   }
   if(!eraseArmed){eraseArmed=true;this.textContent="Tap again: this deletes every purchase and receipt";return;}
@@ -1328,9 +1320,9 @@ fillSelect($("b-cat"),CATS,"Choose a category");
 fillSelect($("f-pay"),PAYS.map(function(p){return [p,p];}),"Choose");
 
 /* ---------- Pixora account and cloud sync ----------
-   Firebase project "Pixora" (pixora-bca1f), web app "Spend Log". Each person's data lives under
+   Firebase project "Pixora" (pixora-bca1f), web app "Tally". Each person's data lives under
    apps/spendlog/users/<their uid>, which the database rules let only that person read or write.
-   Every record and receipt photo is encrypted on the phone with the Spend Log data key before it
+   Every record and receipt photo is encrypted on the phone with the Tally data key before it
    is uploaded, so the database only ever holds ciphertext: nobody with database access, the
    project owner included, can read it. The data key itself is stored only wrapped by the passcode. */
 var CLOUD_ROOT="apps/spendlog/users/",PHOTO_CHUNK=900000;
@@ -1370,8 +1362,10 @@ async function getCloudMeta(){var s=await userDoc().get();return s.exists&&s.dat
 function setCloud(state,err){cloudState=state;cloudErr=err||"";if(state==="synced")lastSync=Date.now();paintCloud();}
 function paintCloud(){
   var st=$("saveStatus");if(!st)return;
-  var txt=!cuser?"On this phone only · Sign in to back up":cloudState==="synced"?"Synced to your Pixora account":cloudState==="syncing"?"Syncing…":cloudState==="offline"?"Offline · will sync later":cloudState==="conflict"?"Account needs your other passcode":cloudState==="error"?"Sync paused":"Connecting to your account…";
-  st.textContent=txt;st.className="status"+((!cuser||cloudState==="conflict"||cloudState==="error")?" warn":"");
+  var full=!cuser?"On this phone only. Sign in to back up":cloudState==="synced"?"Synced to your Pixora account":cloudState==="syncing"?"Syncing…":cloudState==="offline"?"Offline. Changes sync when you're back online":cloudState==="conflict"?"Your account needs your other passcode":cloudState==="error"?"Sync paused":"Connecting to your account…";
+  var txt=!cuser?"This phone only":cloudState==="synced"?"Synced":cloudState==="syncing"?"Syncing":cloudState==="offline"?"Offline":cloudState==="conflict"?"Action needed":cloudState==="error"?"Sync paused":"Connecting";
+  st.textContent="";st.append(h("i",{class:"sdot","aria-hidden":"true"}),txt);st.setAttribute("aria-label",full+". Open account settings.");st.title=full;
+  st.className="status "+((cloudState==="conflict"||cloudState==="error")?"warn":!cuser?"local":cloudState==="synced"?"ok":"busy");
 }
 function stampMissing(){
   var ch=false;
@@ -1539,7 +1533,7 @@ async function cloudMetaPush(){
   var meta=await kvGet("meta");
   if(cloudLive&&meta.kind!=="pixora")await userDoc().set(metaToCloud(meta),{merge:true});
 }
-/* Removes this person's Spend Log data from their Pixora account. */
+/* Removes this person's Tally data from their Pixora account. */
 async function cloudWipe(){
   if(!fdb||!cuser)return;
   var s=await userDoc().get(),ph=s.exists&&Array.isArray(s.data().ph)?s.data().ph:[],refs=[];
@@ -1549,7 +1543,7 @@ async function cloudWipe(){
   for(var i=0;i<refs.length;i+=400){var b=fdb.batch();refs.slice(i,i+400).forEach(function(r){b.delete(r);});await b.commit();}
   var uid=cuser.uid;["pushed:","pulled:","photosUp:"].forEach(function(p){kvSet(p+uid,null).catch(function(){});});
 }
-/* Joining an account that already holds Spend Log data from another phone: unwrap that data key with
+/* Joining an account that already holds Tally data from another phone: unwrap that data key with
    the passcode set there, re-encrypt this phone's data with it, and from then on both phones share one key. */
 async function cloudJoin(pass){
   var cm=cloudConflict.meta,raw=await unseal(await kek(pass,cm.salt,cm.iter),cm.wrapped);
@@ -1604,7 +1598,7 @@ function acctForm(prefix,onDone){
       h("button",{type:"button",class:"btn quiet",text:"Forgot password",onclick:go("reset")})));
   return wrap;
 }
-/* First screen on a phone with no Spend Log data yet. */
+/* First screen on a phone with no Tally data yet. */
 function showAccount(problem){
   $("app").hidden=true;$("lock").hidden=true;$("acct").hidden=false;$("navbar").hidden=true;
   var box=$("acctBody");box.textContent="";
@@ -1624,23 +1618,23 @@ function cloudPanel(){
   var p=h("div",{class:"panel"},h("h3",{text:"Pixora account"}));
   if(!fdb&&!window.firebase){p.append(h("p",{class:"small muted",text:"The account service isn't available in this view."}));return p;}
   if(!cuser){
-    p.append(h("p",{class:"small muted",text:"Sign in with your Pixora account to back up Spend Log and use it on more than one phone. Your purchases, items, bills and returns are encrypted on this phone before they're uploaded, so nobody else can read them, including whoever runs Pixora. Receipt photos stay on this phone only."}));
+    p.append(h("p",{class:"small muted",text:"Sign in with your Pixora account to back up Tally and use it on more than one phone. Your purchases, items, bills and returns are encrypted on this phone before they're uploaded, so nobody else can read them, including whoever runs Pixora. Receipt photos stay on this phone only."}));
     p.append(acctForm("s",async function(){render();await cloudStart();render();}));
     return p;
   }
   p.append(h("p",{class:"small",text:"Signed in as "+(cuser.email||"your Pixora account")+"."}));
-  if((cloudConflict&&cloudConflict.kind==="pixora")||pxNeed)p.append(h("p",{class:"small",style:"font-weight:600",text:"Finish the step at the top of the screen to keep Spend Log in sync."}));
+  if((cloudConflict&&cloudConflict.kind==="pixora")||pxNeed)p.append(h("p",{class:"small",style:"font-weight:600",text:"Finish the step at the top of the screen to keep Tally in sync."}));
   if(cloudState==="conflict"&&cloudConflict&&cloudConflict.kind==="pixora"){}
   else if(cloudState==="conflict"){
     var msg=h("p",{class:"err",role:"alert",hidden:true});
-    p.append(h("p",{class:"small",style:"font-weight:600",text:"This account already has Spend Log data from another phone, protected by a different passcode. Enter that passcode to combine it with what's on this phone."}),
+    p.append(h("p",{class:"small",style:"font-weight:600",text:"This account already has Tally data from another phone, protected by a different passcode. Enter that passcode to combine it with what's on this phone."}),
       pwField("s-joinpw","Passcode from your other phone","current-password"),msg);
     var jb=h("button",{type:"button",class:"btn primary",text:"Combine",onclick:async function(){
       jb.disabled=true;jb.textContent="Combining…";
       try{await cloudJoin($("s-joinpw").value);toast("Combined. Both phones now use the same passcode.");render();}
       catch(e){msg.textContent="That passcode doesn't open the data in your account.";msg.hidden=false;jb.disabled=false;jb.textContent="Combine";}
     }});
-    var rb=h("button",{type:"button",class:"btn danger",text:joinWipeArmed?"Tap again: deletes the account's Spend Log data":"I forgot it: replace the account's data with this phone's",onclick:async function(){
+    var rb=h("button",{type:"button",class:"btn danger",text:joinWipeArmed?"Tap again: deletes the account's Tally data":"I forgot it: replace the account's data with this phone's",onclick:async function(){
       if(!joinWipeArmed){joinWipeArmed=true;render();return;}
       joinWipeArmed=false;rb.disabled=true;
       try{await cloudReplace();toast("Your account now holds this phone's data.");}catch(e){toast("Couldn't reach your account. Try again.");}
@@ -1663,10 +1657,10 @@ addEventListener("online",function(){if(cuser&&DEK&&(cloudState==="offline"||clo
 
 /* ---------- One Pixora passcode ----------
    Same scheme as pixora-kit.js in the other Pixora apps: a master secret kept in apps/pixora/users/<uid>,
-   stored only wrapped by the Pixora passcode. Spend Log derives its own app key from it (HKDF info
-   "pixora-app:spendlog"), so no other Pixora app can read Spend Log data. That app key wraps the Spend Log
-   data key ("pk" in the Spend Log account doc). One passcode unlocks every Pixora app, typed once per phone.
-   People who use Spend Log without an account keep a Spend Log passcode on that phone instead. */
+   stored only wrapped by the Pixora passcode. Tally derives its own app key from it (HKDF info
+   "pixora-app:spendlog"), so no other Pixora app can read Tally data. That app key wraps the Tally
+   data key ("pk" in the Tally account doc). One passcode unlocks every Pixora app, typed once per phone.
+   People who use Tally without an account keep a Tally passcode on that phone instead. */
 var PX_ITER=600000,vaultKind="legacy",pxCtx=null,pxNeed=null,pxArm=false;
 function b64(u){var s="",i;u=u8(u);for(i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s);}
 function unb64(s){var b=atob(s),o=new Uint8Array(b.length),i;for(i=0;i<b.length;i++)o[i]=b.charCodeAt(i);return o;}
@@ -1709,22 +1703,22 @@ async function resealReceipts(nk){
   var ids=await recKeys();
   for(var i=0;i<ids.length;i++){var r=await recGet(ids[i]);if(!r)continue;try{var b=await seal(nk,await unseal(DEK,r));await recSet(ids[i],{iv:b.iv,ct:b.ct,type:r.type});}catch(e){}}
 }
-/* A brand-new Spend Log under the Pixora passcode. */
+/* A brand-new Tally under the Pixora passcode. */
 async function pxCreateVault(ak,mid){
   var r=await pkNew(ak,mid);
   DEK=r.key;blankState();vaultKind="pixora";
   await kvSet("meta",{v:2,kind:"pixora",vid:rid(),mts:Date.now()});await kvSet("pk",r.pk);
   await persist();
 }
-/* This phone opens the Spend Log already in the account. */
+/* This phone opens the Tally already in the account. */
 async function pxJoinCloud(ak,raw){
   DEK=await pkOpen(ak,pkFromCloud(raw.pk));blankState();vaultKind="pixora";
   await kvSet("meta",{v:2,kind:"pixora",vid:raw.vid,mts:raw.mts||0});await kvSet("pk",pkFromCloud(raw.pk));
   if(cuser){await kvSet("pulled:"+cuser.uid,0);await kvSet("pushed:"+cuser.uid,0);}
   await persist();
 }
-/* Re-lock this phone's Spend Log with the Pixora passcode: a fresh data key, everything re-encrypted with it,
-   and the account copy replaced. Used to move off the old Spend Log passcode, or after a Pixora passcode reset. */
+/* Re-lock this phone's Tally with the Pixora passcode: a fresh data key, everything re-encrypted with it,
+   and the account copy replaced. Used to move off the old Tally passcode, or after a Pixora passcode reset. */
 async function pxRekey(ak,mid){
   var old=await kvGet("meta"),r=await pkNew(ak,mid),vid=rid();
   await resealReceipts(r.key);
@@ -1743,7 +1737,7 @@ async function pxRekey(ak,mid){
   pxNeed=null;cloudConflict=null;T("px_relock");
   if(cuser)await cloudStart();
 }
-/* This phone has its own Spend Log, and the account holds one from another phone: open the account's key,
+/* This phone has its own Tally, and the account holds one from another phone: open the account's key,
    re-encrypt this phone's data with it and merge. Nothing on either side is lost. */
 async function pxAdopt(ak,raw){
   var old=await kvGet("meta"),pk=pkFromCloud(raw.pk),nk=await pkOpen(ak,pk);
@@ -1759,7 +1753,7 @@ async function pxAdopt(ak,raw){
   pxNeed=null;cloudConflict=null;T("px_combine");
   await cloudStart();
 }
-/* Has the Pixora passcode been reset in another app since this phone locked Spend Log with it? */
+/* Has the Pixora passcode been reset in another app since this phone locked Tally with it? */
 async function pxCheck(uid){
   var mk=await getMk(),pk=await kvGet("pk");
   if(!cuser||cuser.uid!==uid)return;
@@ -1782,10 +1776,10 @@ function pxCard(){
 function pxCardBuild(conflict,need){
   var hasMk=conflict?true:!!(need&&need.mk),setting=!conflict&&need&&need.loaded&&!need.mk;
   var title=conflict?"Combine with your account":need.why==="reset"?"Enter your new Pixora passcode":setting?"Set your Pixora passcode":"Switch to your Pixora passcode";
-  var text=conflict?"This Pixora account already has Spend Log data from another phone. Enter your Pixora passcode to combine it with what's on this phone. Nothing is lost on either side."
-    :need.why==="reset"?"Your Pixora passcode was reset in another Pixora app. Enter the new one so this phone keeps Spend Log in sync."
-    :setting?"Spend Log now uses one Pixora passcode, shared with your other Pixora apps. Set it once here. Your old Spend Log passcode is retired."
-    :"Spend Log now uses your Pixora passcode, the same one as your other Pixora apps. Enter it once and your old Spend Log passcode is retired.";
+  var text=conflict?"This Pixora account already has Tally data from another phone. Enter your Pixora passcode to combine it with what's on this phone. Nothing is lost on either side."
+    :need.why==="reset"?"Your Pixora passcode was reset in another Pixora app. Enter the new one so this phone keeps Tally in sync."
+    :setting?"Tally now uses one Pixora passcode, shared with your other Pixora apps. Set it once here. Your old Tally passcode is retired."
+    :"Tally now uses your Pixora passcode, the same one as your other Pixora apps. Enter it once and your old Tally passcode is retired.";
   var msg=h("p",{class:"err",role:"alert",hidden:true});
   var p1=h("input",{type:"password",id:"px-p1",autocomplete:setting?"new-password":"current-password"});
   var p2=setting?h("input",{type:"password",id:"px-p2",autocomplete:"new-password"}):null;
@@ -1808,13 +1802,13 @@ function pxCardBuild(conflict,need){
         var cpk=pkFromCloud(cloudConflict.raw.pk);
         if(!cpk||cpk.mid!==mk.id)throw {code:"stale"};
         await pxAdopt(ak,cloudConflict.raw);toast("Combined. This phone and your account now match.");
-      }else{await pxRekey(ak,mk.id);toast("Done. Spend Log now opens with your Pixora passcode.");}
+      }else{await pxRekey(ak,mk.id);toast("Done. Tally now opens with your Pixora passcode.");}
       render();
     }catch(e){
       go.disabled=false;go.textContent=setting?"Set passcode":"Continue";
-      msg.textContent=e&&e.code==="wrong"?"That isn't your Pixora passcode.":e&&e.code==="stale"?"The Spend Log data in your account was locked before your Pixora passcode was reset, so nothing can open it now. Use the button below to replace it with this phone's data.":navigator.onLine===false?"No connection. Connect to the internet and try again.":"Something went wrong. Try again.";
+      msg.textContent=e&&e.code==="wrong"?"That isn't your Pixora passcode.":e&&e.code==="stale"?"The Tally data in your account was locked before your Pixora passcode was reset, so nothing can open it now. Use the button below to replace it with this phone's data.":navigator.onLine===false?"No connection. Connect to the internet and try again.":"Something went wrong. Try again.";
       msg.hidden=false;
-      if(e&&e.code==="stale"&&!f.querySelector(".pxreplace"))f.append(h("div",{class:"btnrow pxreplace"},h("button",{type:"button",class:"btn danger",text:"Replace the account's Spend Log data with this phone's",onclick:async function(){
+      if(e&&e.code==="stale"&&!f.querySelector(".pxreplace"))f.append(h("div",{class:"btnrow pxreplace"},h("button",{type:"button",class:"btn danger",text:"Replace the account's Tally data with this phone's",onclick:async function(){
         try{await cloudWipe();S.seen={};await persist();cloudConflict=null;pxNeed={why:"reset",mk:await getMk(),loaded:true};pxCardEl=null;render();}catch(x){toast("Couldn't reach your account. Try again.");}
       }})));
     }
@@ -1838,7 +1832,7 @@ function pxPassPanel(){
     catch(e){msg.textContent=e&&e.code==="wrong"?"The current Pixora passcode is wrong.":"Couldn't reach your account. Check the connection and try again.";msg.hidden=false;change.disabled=false;change.textContent="Change Pixora passcode";}
   }});
   return h("div",{class:"panel"},h("h3",{text:"Pixora passcode"}),
-    h("p",{class:"small muted",text:"One passcode for Spend Log and your other Pixora apps. Changing it here changes it everywhere. Phones that are already unlocked stay unlocked."}),
+    h("p",{class:"small muted",text:"One passcode for Tally and your other Pixora apps. Changing it here changes it everywhere. Phones that are already unlocked stay unlocked."}),
     pwField("s-cur","Current Pixora passcode","current-password"),pwField("s-new","New Pixora passcode","new-password"),pwField("s-conf","Repeat new passcode","new-password"),msg,h("div",{class:"btnrow"},change));
 }
 /* Lock screen when the Pixora passcode is the key. */
@@ -1857,7 +1851,7 @@ async function pxLockSubmit(pass,pass2){
   if(ctx.fromCloud){
     if(ctx.raw&&ctx.raw.pk){
       var cpk=pkFromCloud(ctx.raw.pk);
-      if(cpk.mid!==mk.id)throw {msg:"Spend Log in your account was locked before your Pixora passcode was reset. Open Spend Log on a phone where it's already open and it fixes itself, or tap Forgot it below to start Spend Log over.",stale:true};
+      if(cpk.mid!==mk.id)throw {msg:"Tally in your account was locked before your Pixora passcode was reset. Open Tally on a phone where it's already open and it fixes itself, or tap Forgot it below to start Tally over.",stale:true};
       await pxJoinCloud(ak,ctx.raw);T("px_new_phone");
     }else{await pxCreateVault(ak,mk.id);T("px_first_vault");}
     return;
@@ -1868,7 +1862,7 @@ async function pxLockSubmit(pass,pass2){
 
 
 /* ---------- Layout: bottom tab bar, Home, More ---------- */
-var SUBOF={bills:1,budgets:1,inbox:1,import:1,settings:1};
+var SUBOF={bills:1,budgets:1,inbox:1,import:1,settings:1,subs:1,warranty:1};
 function go(tab){if(S.tab!==tab){S.tab=tab;try{window.scrollTo(0,0);}catch(e){}}render();}
 function flagGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function flagSet(k){try{localStorage.setItem(k,"1");}catch(e){}}
@@ -1893,7 +1887,6 @@ $("navbar").addEventListener("click",function(ev){
 });
 function backBtn(){return h("button",{type:"button",class:"back",onclick:function(){go("more");}},h("span",{"aria-hidden":"true",text:"‹ "}),"More");}
 function viewMore(v){
-  v.append(h("h2",{text:"More"}));
   var need=S.entries.filter(function(e){return e.needsDetails;}).length,soon=billsDueSoon().length,nb=Object.keys(S.budgets||{}).length;
   var rows=[["bills","Bills",S.bills.length?(soon?soon+(soon===1?" bill due soon":" bills due soon"):S.bills.length+(S.bills.length===1?" monthly bill":" monthly bills")):"Rent, phone, insurance, subscriptions",soon],
     ["budgets","Budgets",nb?nb+(nb===1?" category has":" categories have")+" a monthly limit":"Set a monthly limit per category",0],
@@ -1906,7 +1899,7 @@ function viewMore(v){
     h("span",{class:"mtx"},h("span",{class:"mt",text:r[1]}),h("span",{class:"ms",text:r[2]})),
     r[3]?h("b",{class:"mbadge",text:String(r[3])}):null,h("span",{class:"chev","aria-hidden":"true",text:"›"})));});
   v.append(list);
-  v.append(h("p",{class:"small muted",text:"Spend Log is part of Pixora. Everything you log is encrypted on your phone before it syncs, so nobody else can read it."}));
+  v.append(h("p",{class:"small muted",text:"Tally is part of Pixora. Everything you log is encrypted on your phone before it syncs, so nobody else can read it."}));
 }
 function renderAlerts(){
   var box=$("alerts");box.textContent="";
@@ -1915,6 +1908,8 @@ function renderAlerts(){
   openReturns().forEach(function(e){var d=daysLeft(e.returnBy);items.push({k:d,cls:d<=2?"impulse":"want",t:(d===0?"Last day to return ":"Return by "+dayLabel(e.returnBy)+": ")+title(e),go:"returns"});});
   budgetStatus().filter(function(b){return b.pct>=80;}).forEach(function(b){items.push({k:5,cls:b.pct>=100?"impulse":"want",t:b.pct>=100?(CATNAME[b.c]||"Other")+" is "+money(b.spent-b.limit)+" over budget":(CATNAME[b.c]||"Other")+" has used "+Math.round(b.pct)+"% of its budget",go:"budgets"});});
   try{subAlerts().forEach(function(x){items.push(x);});}catch(e){}
+  var noRec=S.entries.filter(function(e){return !e.needsDetails&&!e.billId&&!e.receiptId&&!e.noReceipt&&(+e.amount||0)>=50&&daysLeft(e.date||"")>=-14;});
+  if(noRec.length)items.push({k:15,cls:"",t:noRec.length===1?"Keep the receipt for "+title(noRec[0])+" ("+money(noRec[0].amount)+")":noRec.length+" purchases over $50 have no receipt yet",go:"log"});
   var need=S.entries.filter(function(e){return e.needsDetails;}).length;
   if(need)items.push({k:20,cls:"",t:need+(need===1?" bank row needs details":" bank rows need details"),go:"inbox"});
   items.sort(function(a,b){return a.k-b.k;});
@@ -1934,7 +1929,7 @@ function card(title,action,label){
 }
 function budgetCard(){
   var st=budgetStatus(),c=card("Budgets this month",function(){go("budgets");},st.length?"Edit":"Set up");
-  if(!st.length){c.append(h("p",{class:"small muted",text:"Give a category a monthly limit. Spend Log warns you here at 80% and when you go over."}));return c;}
+  if(!st.length){c.append(h("p",{class:"small muted",text:"Give a category a monthly limit. Tally warns you here at 80% and when you go over."}));return c;}
   var t=new Date(),dim=new Date(t.getFullYear(),t.getMonth()+1,0).getDate(),dayPct=t.getDate()/dim*100;
   st.forEach(function(b){
     var cls=b.pct>=100?"over":b.pct>=80?"near":"ok";
@@ -2040,6 +2035,100 @@ function csvFor(list){
   return rows.map(function(r){return r.map(function(c){c=String(c);return /[",\n]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c;}).join(",");}).join("\n");
 }
 
+
+/* ---------- Tally look: category icons, page titles, pickers ---------- */
+var CATICON={
+  groceries:"M5 9h14l-1.6 10.2a1 1 0 0 1-1 .8H7.6a1 1 0 0 1-1-.8zM9 9l3-5 3 5",
+  eating:"M7 3v18M4.5 3v4.5a2.5 2.5 0 0 0 5 0V3M17.5 21V3c-2.4 1.5-3.5 4.5-3.5 8h3.5",
+  transport:"M5 17v-5l2-5.5h10l2 5.5v5zM3 17h18M7.5 17v2.5M16.5 17v2.5M5 12h14",
+  housing:"M3.5 10.5 12 4l8.5 6.5V20h-17zM10 20v-5h4v5",
+  subs:"M17 3l3 3-3 3M4 12v-2a4 4 0 0 1 4-4h12M7 21l-3-3 3-3M20 12v2a4 4 0 0 1-4 4H4",
+  shopping:"M6 8h12l-1 12H7zM9 8V6.5a3 3 0 0 1 6 0V8",
+  health:"M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.3a4.3 4.3 0 0 1 7.5 2.5C19.5 15.4 12 20 12 20z",
+  fun:"M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z",
+  work:"M4 8h16v11H4zM9 8V5.5h6V8M4 13h16",
+  other:"M6 12h.01M12 12h.01M18 12h.01",
+  unsorted:"M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01"
+};
+var ICON={
+  x:"M6 6l12 12M18 6 6 18",
+  camera:"M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
+  receipt:"M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6",
+  cloud:"M7 18a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.4 1.6A3.8 3.8 0 0 1 17 18z",
+  check:"M5 12.5l4.5 4.5L19 7.5",
+  up:"M12 19V5M6 11l6-6 6 6",
+  down:"M12 5v14M6 13l6 6 6-6",
+  repeat:"M17 3l3 3-3 3M4 12v-2a4 4 0 0 1 4-4h12M7 21l-3-3 3-3M20 12v2a4 4 0 0 1-4 4H4"
+};
+function svgI(d,cls){
+  var s=document.createElementNS("http://www.w3.org/2000/svg","svg");s.setAttribute("viewBox","0 0 24 24");s.setAttribute("aria-hidden","true");if(cls)s.setAttribute("class",cls);
+  var p=document.createElementNS("http://www.w3.org/2000/svg","path");p.setAttribute("d",d);s.appendChild(p);return s;
+}
+function catIcon(c){var k=CATICON[c]?c:"unsorted";var b=h("span",{class:"cic cat-"+k});b.appendChild(svgI(CATICON[k]));return b;}
+var PAGETITLE={home:"Tally",log:"Purchases",returns:"Returns",more:"More",bills:"Bills",budgets:"Budgets",inbox:"Needs details",import:"Bank import",settings:"Account",subs:"Subscriptions",warranty:"Warranties"};
+function paintTitle(){var t=$("pageTitle");if(t)t.textContent=PAGETITLE[S.tab]||"Tally";$("todayLabel").hidden=S.tab!=="home";}
+
+/* Category and payment pickers mirror the hidden selects, so every place that sets select.value keeps working. */
+function hookSelect(sel,onSet){
+  var d=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value");
+  Object.defineProperty(sel,"value",{configurable:true,get:function(){return d.get.call(this);},set:function(v){d.set.call(this,v);onSet();}});
+  sel.addEventListener("change",onSet);
+}
+function buildPickers(){
+  var cp=$("catPick"),pp=$("payPick");
+  CATS.forEach(function(c){
+    var b=h("button",{type:"button",class:"catopt",role:"radio","aria-checked":"false","data-v":c[0],onclick:function(){var s=$("f-cat");s.value=s.value===c[0]?"":c[0];s.dispatchEvent(new Event("change"));}},catIcon(c[0]),h("span",{text:c[1].replace(" & gas","").replace("Rent & utilities","Rent & bills").replace("Work & business","Work")}));
+    cp.append(b);
+  });
+  PAYS.forEach(function(p){
+    pp.append(h("button",{type:"button",class:"payopt",role:"radio","aria-checked":"false","data-v":p,text:p,onclick:function(){var s=$("f-pay");s.value=s.value===p?"":p;s.dispatchEvent(new Event("change"));}}));
+  });
+  function sync(box,sel){box.querySelectorAll("[data-v]").forEach(function(b){b.setAttribute("aria-checked",b.dataset.v===sel.value?"true":"false");});}
+  hookSelect($("f-cat"),function(){sync(cp,$("f-cat"));});
+  hookSelect($("f-pay"),function(){sync(pp,$("f-pay"));});
+  // file inputs: the visible label-buttons follow the hidden inputs
+  new MutationObserver(function(){$("f-photoBtn").hidden=$("f-receipt").hidden;$("f-photo2Btn").hidden=$("f-receipt").hidden;}).observe($("f-receipt"),{attributes:true,attributeFilter:["hidden"]});
+  $("f-receipt").addEventListener("change",function(){$("f-photoLab").textContent="Change photo";});
+  $("f-receipt2").addEventListener("change",function(){if(this.files&&this.files[0])$("f-photo2Lab").textContent="Change second photo";});
+  $("f-x").addEventListener("click",closeEntry);
+  $("f-again").addEventListener("click",function(){var e=editing;if(!e)return;closeEntry();logAgain(e);});
+  $("f-view").addEventListener("click",function(){if(editing&&editing.receiptId)showReceipt(editing.receiptId,editing.receiptId2);});
+}
+function fitAmount(){var x=$("f-amount");x.style.width=Math.max(4,(x.value||x.placeholder).length+0.6)+"ch";}
+$("f-amount").addEventListener("input",fitAmount);
+function entryOpened(e){
+  setTimeout(fitAmount,0);
+  var ed=e&&e.id?e:null;
+  $("f-again").hidden=!(ed&&!ed.needsDetails&&!ed.billId&&ed.what);
+  $("f-view").hidden=!(ed&&ed.receiptId);
+  $("f-photoLab").textContent=ed&&ed.receiptId?"Replace photo":"Add receipt photo";
+  $("f-photo2Lab").textContent=ed&&ed.receiptId2?"Replace second photo":"Second photo (long receipt)";
+  $("f-more").open=!!((e&&Array.isArray(e.items)&&e.items.length)||(e&&(e.returnBy||e.returnAny||e.warrantyUntil)));
+  $("f-cat").value=$("f-cat").value;$("f-pay").value=$("f-pay").value;
+  setTimeout(function(){$("entryDlg").scrollTop=0;},0);
+}
+/* Auto-filled return dates open the section so you see them. */
+new MutationObserver(function(){if($("f-returnNote").textContent)$("f-more").open=true;}).observe($("f-returnNote"),{childList:true,characterData:true,subtree:true});
+
+function monthSpent(m){return sum(S.entries.filter(function(e){return !e.needsDetails&&ym(e.date||"")===m;}));}
+function heroCard(){
+  var m=ym(today()),lm=shiftMonth(m,-1),dom=new Date().getDate(),spent=monthSpent(m);
+  var lastSoFar=sum(S.entries.filter(function(e){return !e.needsDetails&&ym(e.date||"")===lm&&+(e.date||"").slice(8,10)<=dom;}));
+  var box=h("div",{class:"hero"});
+  box.append(h("p",{class:"hlabel",text:"Spent in "+monthLabel(m).split(" ")[0]}),h("p",{class:"hamt",text:money(spent)}));
+  var bits=h("div",{class:"hbits"});
+  if(lastSoFar>0&&Math.abs(spent-lastSoFar)>=1){
+    var more=spent>lastSoFar;
+    bits.append(h("span",{class:"hpill "+(more?"up":"down")},svgI(more?ICON.up:ICON.down),money(Math.abs(spent-lastSoFar))+(more?" more":" less")+" than this time last month"));
+  }
+  var st=budgetStatus(m);
+  if(st.length){var left=st.reduce(function(t,b){return t+(b.limit-b.spent);},0);
+    bits.append(h("span",{class:"hpill "+(left<0?"up":"")},left<0?money(-left)+" over your budgets":money(left)+" left in your budgets"));}
+  if(bits.childNodes.length)box.append(bits);
+  return box;
+}
+
+buildPickers();
 $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}});
 (async function boot(){
   S.month=ym(today());
@@ -2061,7 +2150,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v13",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v15",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

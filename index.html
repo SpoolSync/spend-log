@@ -394,6 +394,35 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
 .qdup{margin:0;padding:12px;border-radius:12px;background:color-mix(in srgb,var(--impulse) 12%,var(--paper));border:1px solid var(--impulse);font-weight:600;font-size:14px}
 .qsrc{margin:-4px 0 0;font-size:13px;color:var(--muted)}
 .qcacts{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+/* sheet never wider than the phone */
+dialog.sheet{overflow-x:hidden}
+dialog.sheet .form,dialog.sheet .field,details.more,.itemed{min-width:0;max-width:100%}
+dialog.sheet input,dialog.sheet textarea,dialog.sheet select,dialog.qc input{max-width:100%;box-sizing:border-box}
+input[type=date],input[type=time]{-webkit-appearance:none;appearance:none;display:block;width:100%;min-height:48px;box-sizing:border-box}
+.footrow{min-width:0}.footrow .btn{min-width:0}
+/* item editor */
+.irows{display:flex;flex-direction:column;gap:8px}
+.irow{display:flex;flex-direction:column;gap:2px}
+.itop{display:grid;grid-template-columns:minmax(0,1fr) auto 84px 36px;align-items:center;gap:6px}
+.itop input{min-height:44px;padding:8px 10px}
+.icost{text-align:right;font-variant-numeric:tabular-nums}
+.icur{color:var(--muted);font-weight:600}
+.irm{width:36px;height:36px;border:0;border-radius:50%;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.irm svg{width:18px;height:18px}
+.iid{font-size:12px;color:var(--muted);padding-left:2px}
+.iactions{margin-top:8px}
+.isum{margin:6px 0 0;font-size:13.5px;font-weight:600;display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}
+.isum .muted{font-weight:500}
+.isum .linkbtn{min-height:28px;font-size:13.5px}
+.hint{margin:6px 0 0;font-size:13px;color:var(--accent);font-weight:600}
+/* cards */
+.paypick .payopt.card{display:inline-flex;flex-direction:row;align-items:center;gap:7px}
+.payopt.add{border-style:dashed;color:var(--accent)}
+.cdot{width:10px;height:10px;border-radius:3px;background:var(--accent);flex:none}
+.cdot.deb{background:var(--need)}
+.cdot.big{width:14px;height:14px;border-radius:4px}
+.payopt[aria-checked="true"] .cdot{background:#fff}
+dialog.qc .field{display:flex;flex-direction:column;gap:6px}
 /* chooser */
 #chooseDlg .form{padding-top:18px;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
 .choice{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper)}
@@ -461,8 +490,9 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
     </div>
     <p class="bank" id="f-bank" hidden></p>
     <div class="amountbox"><label for="f-amount">Amount</label><div class="amtwrap"><span class="cur" aria-hidden="true">$</span><input type="number" id="f-amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00"></div></div>
-    <div class="field"><label for="f-what">What did you buy?</label><input type="text" id="f-what" maxlength="120" placeholder="Lunch, phone bill, brake pads" autocomplete="off"></div>
-    <div class="field"><label for="f-where">Where?</label><input type="text" id="f-where" maxlength="80" placeholder="Store or company" autocomplete="off"></div>
+    <div class="field"><label for="f-what">What did you buy?</label><input type="text" id="f-what" maxlength="120" placeholder="Lunch, phone bill, brake pads" autocomplete="off" list="dl-what"><p class="hint" id="f-hint" hidden></p></div>
+    <div class="field"><label for="f-where">Where?</label><input type="text" id="f-where" maxlength="80" placeholder="Store or company" autocomplete="off" list="dl-where"></div>
+    <datalist id="dl-what"></datalist><datalist id="dl-where"></datalist>
     <div class="field">
       <span class="lab" id="catLab">Category</span>
       <div class="catgrid" id="catPick" role="radiogroup" aria-labelledby="catLab"></div>
@@ -485,6 +515,7 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
       <span class="lab" id="payLab">Paid with</span>
       <div class="paypick" id="payPick" role="radiogroup" aria-labelledby="payLab"></div>
       <select id="f-pay" class="vh" tabindex="-1" aria-hidden="true"></select>
+      <input type="hidden" id="f-card">
     </div>
     <div class="field" id="receiptField">
       <span class="lab">Receipt</span>
@@ -504,6 +535,11 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
     <details class="more" id="f-more">
       <summary>Items, return window and warranty</summary>
       <div class="field">
+        <span class="lab">Items</span>
+        <div id="itemEd" class="itemed"></div>
+        <textarea id="f-items" class="vh" tabindex="-1" aria-hidden="true"></textarea>
+      </div>
+      <div class="field">
         <label for="f-return">Return by</label>
         <input type="date" id="f-return">
         <label class="check" for="f-returnAny"><input type="checkbox" id="f-returnAny"> Returnable any time</label>
@@ -515,10 +551,7 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
         <input type="date" id="f-warranty">
         <div class="chips"><button type="button" class="chip" id="f-w1">+1 year</button><button type="button" class="chip" id="f-w2">+2 years</button><button type="button" class="chip" id="f-w0">None</button></div>
       </div>
-      <div class="field">
-        <label for="f-items">Items, one per line: item ID | name | price | category</label>
-        <textarea id="f-items" spellcheck="false" autocapitalize="off" placeholder="1342746 | ORANGES | 8.99 | Groceries"></textarea>
-      </div>
+
     </details>
     <p class="err" id="f-err" role="alert" hidden></p>
     <div class="sheetfoot">
@@ -532,6 +565,24 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
   </form>
 </dialog>
 
+<dialog id="cardDlg" class="qc" aria-labelledby="cd-title">
+  <form class="qcwrap" id="cardForm" novalidate>
+    <h2 id="cd-title">Add a card</h2>
+    <div class="field"><label for="cd-name">Nickname</label><input type="text" id="cd-name" maxlength="40" placeholder="Wealthsimple Visa, Amex Cobalt" autocomplete="off"></div>
+    <div class="field"><label for="cd-last4">Last 4 digits (optional)</label><input type="text" id="cd-last4" inputmode="numeric" maxlength="19" placeholder="9760" autocomplete="off">
+      <p class="note">Only the last 4 digits. Tally uses them to pick this card when a receipt or screenshot shows them.</p></div>
+    <div class="seg" role="radiogroup" aria-label="Card type">
+      <label><input type="radio" name="cdkind" id="cd-credit" value="credit" checked><span>Credit</span></label>
+      <label><input type="radio" name="cdkind" id="cd-debit" value="debit"><span>Debit</span></label>
+    </div>
+    <p class="err" id="cd-err" role="alert" hidden></p>
+    <div class="qcacts">
+      <button type="submit" class="btn primary wide">Save card</button>
+      <button type="button" class="btn quiet wide" id="cd-cancel">Cancel</button>
+      <button type="button" class="btn danger wide" id="cd-del" hidden>Remove this card</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="qcDlg" class="qc" aria-labelledby="qcTitle">
   <div class="qcwrap">
     <h2 id="qcTitle">Is this right?</h2>
@@ -599,11 +650,11 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
 <script src="firebase-app-compat.js"></script>
 <script src="firebase-auth-compat.js"></script>
 <script src="firebase-firestore-compat.js"></script>
-<script src="cloud.js?v=18"></script>
-<script src="pixora-summary.js?v=18"></script>
-<script src="pixora-usage.js?v=18"></script>
-<script src="subs.js?v=18"></script>
-<script src="app.js?v=18"></script>
-<script src="subs-view.js?v=18"></script>
+<script src="cloud.js?v=19"></script>
+<script src="pixora-summary.js?v=19"></script>
+<script src="pixora-usage.js?v=19"></script>
+<script src="subs.js?v=19"></script>
+<script src="app.js?v=19"></script>
+<script src="subs-view.js?v=19"></script>
 </body>
 </html>

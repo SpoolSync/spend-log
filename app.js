@@ -79,7 +79,7 @@ async function createVault(pass){
   var salt=rnd(16),raw=rnd(32),k=await kek(pass,salt,ITER);
   await kvSet("meta",{v:1,vid:rid(),mts:Date.now(),salt:salt,iter:ITER,wrapped:await seal(k,raw)});
   DEK=await importDek(raw);raw.fill(0);
-  S.entries=[];S.bills=[];S.days={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.tomb={};S.seen={};
+  S.entries=[];S.bills=[];S.days={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.cards=[];S.cardsTs=0;S.tomb={};S.seen={};
   await persist();
 }
 async function openVault(pass){
@@ -88,7 +88,7 @@ async function openVault(pass){
   var key=await importDek(raw);raw.fill(0);
   var box=await kvGet("state"),data={};
   if(box)data=JSON.parse(new TextDecoder().decode(await unseal(key,box)));
-  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};S.daysTs=data.daysTs||0;S.budgets=data.budgets||{};S.budgetsTs=data.budgetsTs||0;S.tomb=data.tomb||{};S.seen=data.seen||{};
+  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};S.daysTs=data.daysTs||0;S.budgets=data.budgets||{};S.budgetsTs=data.budgetsTs||0;S.cards=data.cards||[];S.cardsTs=data.cardsTs||0;S.tomb=data.tomb||{};S.seen=data.seen||{};
 }
 async function changePass(cur,next){
   var meta=await kvGet("meta"),raw=await unseal(await kek(cur,meta.salt,meta.iter),meta.wrapped);
@@ -97,7 +97,7 @@ async function changePass(cur,next){
   cloudMetaPush().catch(function(){});
 }
 function persist(){
-  var snap=JSON.stringify({entries:S.entries,bills:S.bills,days:S.days,daysTs:S.daysTs||0,budgets:S.budgets||{},budgetsTs:S.budgetsTs||0,tomb:S.tomb||{},seen:S.seen||{}}),key=DEK;
+  var snap=JSON.stringify({entries:S.entries,bills:S.bills,days:S.days,daysTs:S.daysTs||0,budgets:S.budgets||{},budgetsTs:S.budgetsTs||0,cards:S.cards||[],cardsTs:S.cardsTs||0,tomb:S.tomb||{},seen:S.seen||{}}),key=DEK;
   writeChain=writeChain.catch(function(){}).then(async function(){
     await kvSet("state",await seal(key,new TextEncoder().encode(snap)));
     cloudKick();dashKick();
@@ -124,7 +124,8 @@ var store={
   },
   deleteBill:async function(id){(S.tomb=S.tomb||{})["b_"+id]=Date.now();S.bills=S.bills.filter(function(x){return x.id!==id;});await persist();render();},
   setNoSpend:async function(date,on){S.daysTs=Date.now();if(on)S.days[date]={noSpend:true};else delete S.days[date];await persist();render();},
-  setBudgets:async function(b){S.budgets=b;S.budgetsTs=Date.now();await persist();render();}
+  setBudgets:async function(b){S.budgets=b;S.budgetsTs=Date.now();await persist();render();},
+  setCards:async function(c){S.cards=c;S.cardsTs=Date.now();await persist();render();if($("entryDlg").open)buildPayPick();}
 };
 function saveErr(e){
   if(e&&e.name==="QuotaExceededError")return "This phone has no room left for the app. Free up storage, then try again.";
@@ -263,7 +264,9 @@ function parseReceiptBoxes(boxes){
   var lines=(boxes||[]).slice().sort(function(a,b){return a.y-b.y;}).map(function(b){return String(b.t||"").replace(/[：]/g,":").replace(/\s+/g," ").trim();}).filter(Boolean);
   var text=lines.join("\n");
   if(text.replace(/[^A-Za-z0-9]/g,"").length<12)return null;
-  var card=parseCardScreen(lines,text);if(card)return card;
+  /* last 4 card digits: masked with any mix of dots, stars or X's (a resized photo can turn one dot into a full stop) */
+  var L4=(/(?:card|visa|master\s?card|amex|debit|credit|ending|acct|account)[^\n]{0,25}?[*xX·•.…\-]{2,}[\s*xX·•.…\-]*(\d{4})\b/i.exec(text)||/[*xX·•…]{3,}[\s*xX·•.…]*(\d{4})\b/.exec(text)||[])[1]||"";
+  var card=parseCardScreen(lines,text);if(card){card.last4=L4;return card;}
   var low=text.toLowerCase(),out={where:"",what:"",amount:null,date:null,time:null,category:"",pay:null,receipt_no:null,items:[],verified:false},i,m;
   for(i=0;i<STORES.length;i++)if(low.indexOf(STORES[i][0])>=0){out.where=STORES[i][1];break;}
   if(!out.where)for(i=0;i<Math.min(3,lines.length);i++){
@@ -271,7 +274,7 @@ function parseReceiptBoxes(boxes){
     var letters=lines[i].replace(/[^A-Za-z ]/g,"").trim();
     if(letters.length>=4&&letters.length>=lines[i].length*0.7){out.where=letters.toLowerCase().replace(/\b[a-z]/g,function(c){return c.toUpperCase();}).slice(0,40);break;}
   }
-  out.date=receiptDate(text);
+  out.date=receiptDate(text);out.last4=L4;
   if((m=/(?:\d{2}\s+|\b)([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/.exec(text)))out.time=z(+m[1])+":"+m[2];
   /* items: names and prices are collected as two ordered columns, then paired by position.
      On a creased or tilted receipt a price often lands on the neighbouring line, but its order in the column holds. */
@@ -335,7 +338,7 @@ function parseReceiptBoxes(boxes){
 
 /* Items are edited as plain lines: item ID | name | price | category */
 function itemsToText(items){
-  return fillItemCats((items||[]).map(function(it){return Object.assign({},it);})).map(function(it){return (it.id||"-")+" | "+(it.name||"")+" | "+(+it.cost||0).toFixed(2)+(it.cat?" | "+CATNAME[it.cat]:"");}).join("\n");
+  return (items||[]).map(function(it){return Object.assign({},it);}).map(function(it){return (it.id||"-")+" | "+(it.name||"")+" | "+(+it.cost||0).toFixed(2)+(it.cat?" | "+CATNAME[it.cat]:"");}).join("\n");
 }
 function textToItems(text){
   var out=[];
@@ -350,7 +353,7 @@ function textToItems(text){
     it.id=it.id.slice(0,24);it.name=it.name.slice(0,60);it.cost=Math.round(it.cost*100)/100;
     if(it.name||it.id)out.push(it);
   });
-  return fillItemCats(out.slice(0,120));
+  return out.slice(0,120);
 }
 
 /* ---------- render ---------- */
@@ -454,6 +457,7 @@ function entryRow(e,ctx){
   var metaBits=[];
   if(e.what&&e.where)metaBits.push(e.where);else if(e.category)metaBits.push(CATNAME[e.category]||e.category);
   if(e.time)metaBits.push(e.time);
+  var ecc=e.cardId&&cardById(e.cardId);if(ecc)metaBits.push(cardLabel(ecc));
   if(e.why==="want"||e.why==="impulse")metaBits.push(WHYNAME[e.why]);
   if(e.note)metaBits.push("“"+e.note+"”");
   var inRet=ctx==="returns",chips=h("div",{class:"chips"});
@@ -498,7 +502,7 @@ function renderView(){
   var v=$("view");v.textContent="";
   if(S.tab!==lastTab){lastTab=S.tab;T("tab_"+S.tab);}
   if(SUBOF[S.tab])v.append(backBtn());
-  if(S.tab==="home")viewHome(v);else if(S.tab==="more")viewMore(v);else if(S.tab==="budgets")viewBudgets(v);else if(S.tab==="log")viewLog(v);else if(S.tab==="inbox")viewInbox(v);else if(S.tab==="bills")viewBills(v);else if(S.tab==="returns")viewReturns(v);else if(S.tab==="import")viewImport(v);else if(S.tab==="subs")viewSubs(v);else if(S.tab==="warranty")viewWarranty(v);else viewSettings(v);
+  if(S.tab==="cards")viewCards(v);else if(S.tab==="home")viewHome(v);else if(S.tab==="more")viewMore(v);else if(S.tab==="budgets")viewBudgets(v);else if(S.tab==="log")viewLog(v);else if(S.tab==="inbox")viewInbox(v);else if(S.tab==="bills")viewBills(v);else if(S.tab==="returns")viewReturns(v);else if(S.tab==="import")viewImport(v);else if(S.tab==="subs")viewSubs(v);else if(S.tab==="warranty")viewWarranty(v);else viewSettings(v);
 }
 
 function viewLog(v){
@@ -764,7 +768,8 @@ $("f-read").addEventListener("click",async function(){
       if(r.date&&parseDate(String(r.date)))$("f-date").value=parseDate(String(r.date));
       if(r.category&&CATNAME[r.category])$("f-cat").value=r.category;
       if(r.pay&&PAYS.indexOf(r.pay)>=0)$("f-pay").value=r.pay;
-      if(Array.isArray(r.items)){pendingItems=r.items.length?r.items:null;$("f-items").value=itemsToText(r.items);}
+      if(r.last4){var mc=cardByLast4(r.last4);if(mc){$("f-card").value=mc.id;$("f-pay").value=payOf(mc);T("card_auto");}}
+      if(Array.isArray(r.items)){pendingItems=r.items.length?r.items:null;$("f-items").value=itemsToText(fillItemCats(r.items.map(function(it){return Object.assign({},it);})));}
       var tm=/^(\d{1,2}):(\d{2})/.exec(String(r.time||""));if(tm)$("f-time").value=z(+tm[1])+":"+tm[2];
       pendingReceipt={no:r.receipt_no==null?"":String(r.receipt_no).slice(0,40),time:tm?z(+tm[1])+":"+tm[2]:"",total:a>0?Math.round(a*100)/100:0};dupOk=false;
       suggestReturn();
@@ -799,6 +804,7 @@ $("entryForm").addEventListener("submit",async function(ev){
   err.hidden=true;save.disabled=true;save.textContent="Saving…";
   var why=["need","want","impulse"].filter(function(w){return $("f-why-"+w).checked;})[0]||"";
   var e=Object.assign({},editing||{},{what:what,where:$("f-where").value.trim(),amount:Math.round(amount*100)/100,date:date,time:$("f-time").value||"",category:$("f-cat").value,pay:$("f-pay").value,why:why,note:$("f-note").value.trim(),noReceipt:$("f-noreceipt").checked,needsDetails:false});
+  e.cardId=$("f-card").value||"";var ecard=cardById(e.cardId);if(ecard)e.pay=payOf(ecard);
   if(!e.createdAt)e.createdAt=Date.now();
   if(!returnTouched)suggestReturn();
   e.warrantyUntil=parseDate($("f-warranty").value)||"";if(e.warrantyUntil&&window.PixoraUsage)PixoraUsage.track("warranty_set");
@@ -1069,7 +1075,7 @@ async function saveFullBackup(pass){
     var bytes=await unseal(DEK,rec);
     metas.push({id:ids[i],type:rec.type||"image/jpeg",off:off,len:bytes.length});parts.push(bytes);off+=bytes.length;
   }
-  var meta=new TextEncoder().encode(JSON.stringify({app:"spendlog",v:2,exportedAt:new Date().toISOString(),entries:S.entries,bills:S.bills,days:S.days,budgets:S.budgets||{},receipts:metas}));
+  var meta=new TextEncoder().encode(JSON.stringify({app:"spendlog",v:2,exportedAt:new Date().toISOString(),entries:S.entries,bills:S.bills,days:S.days,budgets:S.budgets||{},cards:S.cards||[],receipts:metas}));
   var plain=new Uint8Array(4+meta.length+off);new DataView(plain.buffer).setUint32(0,meta.length);
   plain.set(meta,4);var at=4+meta.length;parts.forEach(function(b){plain.set(b,at);at+=b.length;});
   var salt=rnd(16),box=await seal(await kek(pass,salt,ITER),plain);
@@ -1263,7 +1269,7 @@ function viewSettings(v){
   v.append(h("div",{class:"panel"},h("h3",{text:"Start over"}),h("p",{class:"small muted",text:"Deletes every purchase, bill, receipt photo and the passcode from this phone, and the Tally data in your Pixora account if you are signed in. Your Pixora login is not deleted. To delete the login itself, email pixora3dstudios@gmail.com."}),h("div",{class:"btnrow"},erase)));
 }
 async function saveBackup(){
-  var json=JSON.stringify({app:"spendlog",v:1,exportedAt:new Date().toISOString(),entries:S.entries,bills:S.bills,days:S.days,budgets:S.budgets||{}});
+  var json=JSON.stringify({app:"spendlog",v:1,exportedAt:new Date().toISOString(),entries:S.entries,bills:S.bills,days:S.days,budgets:S.budgets||{},cards:S.cards||[]});
   var name="tally-backup-"+today()+".json";
   try{
     var f=new File([json],name,{type:"application/json"});
@@ -1280,8 +1286,8 @@ async function doRestore(){
     var keys={};(await recKeys()).forEach(function(k){keys[k]=1;});
     var now1=Date.now();S.tomb=S.tomb||{};S.entries.forEach(function(e){S.tomb["e_"+e.id]=now1;});S.bills.forEach(function(b){S.tomb["b_"+b.id]=now1;});
     S.entries=sortEntries(d.entries.map(function(e){e=Object.assign({},e);if(e.receiptId&&!keys[e.receiptId]){delete e.receiptId;delete e.receiptType;}if(e.receiptId2&&!keys[e.receiptId2])delete e.receiptId2;return e;}));
-    S.bills=Array.isArray(d.bills)?d.bills:[];S.days=d.days&&typeof d.days==="object"?d.days:{};S.budgets=d.budgets&&typeof d.budgets==="object"?d.budgets:(S.budgets||{});
-    var now2=Date.now()+1;S.entries.forEach(function(e){e.ts=now2;delete S.tomb["e_"+e.id];});S.bills.forEach(function(b){b.ts=now2;delete S.tomb["b_"+b.id];});S.daysTs=now2;S.budgetsTs=now2;S.seen={};
+    S.bills=Array.isArray(d.bills)?d.bills:[];S.days=d.days&&typeof d.days==="object"?d.days:{};S.budgets=d.budgets&&typeof d.budgets==="object"?d.budgets:(S.budgets||{});S.cards=Array.isArray(d.cards)?d.cards:(S.cards||[]);
+    var now2=Date.now()+1;S.entries.forEach(function(e){e.ts=now2;delete S.tomb["e_"+e.id];});S.bills.forEach(function(b){b.ts=now2;delete S.tomb["b_"+b.id];});S.daysTs=now2;S.budgetsTs=now2;S.cardsTs=now2;S.seen={};
     await persist();toast("Backup restored.");S.tab="log";
   }catch(e){toast(saveErr(e));}
   render();
@@ -1289,7 +1295,7 @@ async function doRestore(){
 async function eraseEverything(){
   cloudStop();
   if(cuser){try{await cloudWipe();}catch(e){}}
-  DEK=null;S.entries=[];S.bills=[];S.days={};S.tomb={};S.seen={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.ready=false;
+  DEK=null;S.entries=[];S.bills=[];S.days={};S.tomb={};S.seen={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.cards=[];S.cardsTs=0;S.ready=false;
   try{await wipeAll();}catch(e){}
   pxNeed=null;cloudConflict=null;vaultKind="legacy";
   if(cuser)await routeSignedIn();else showAccount();
@@ -1322,7 +1328,7 @@ function lock(){
   if(!DEK)return;
   kvSet("dek",null).catch(function(){});
   cloudStop();
-  DEK=null;S.entries=[];S.bills=[];S.days={};S.tomb={};S.seen={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.ready=false;pendingRestore=null;lockedBackup=null;settingsEraseArmed=false;
+  DEK=null;S.entries=[];S.bills=[];S.days={};S.tomb={};S.seen={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.cards=[];S.cardsTs=0;S.ready=false;pendingRestore=null;lockedBackup=null;settingsEraseArmed=false;
   closeEntry();closeReceipt();if($("chooseDlg").open)$("chooseDlg").close();if($("retDlg").open)$("retDlg").close();if($("billDlg").open)$("billDlg").close();
   $("view").textContent="";$("tape").textContent="";$("checkin").textContent="";
   showLock(vaultKind==="pixora"?"pxunlock":"unlock");
@@ -1374,7 +1380,7 @@ async function rememberKey(){
 async function openWithKey(key){
   var box=await kvGet("state"),data={};
   if(box)data=JSON.parse(new TextDecoder().decode(await unseal(key,box)));
-  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};S.daysTs=data.daysTs||0;S.budgets=data.budgets||{};S.budgetsTs=data.budgetsTs||0;S.tomb=data.tomb||{};S.seen=data.seen||{};
+  DEK=key;S.entries=sortEntries(data.entries||[]);S.bills=data.bills||[];S.days=data.days||{};S.daysTs=data.daysTs||0;S.budgets=data.budgets||{};S.budgetsTs=data.budgetsTs||0;S.cards=data.cards||[];S.cardsTs=data.cardsTs||0;S.tomb=data.tomb||{};S.seen=data.seen||{};
 }
 function enterApp(){
   S.ready=true;S.tab="home";S.month=ym(today());
@@ -1461,6 +1467,7 @@ function stampMissing(){
   S.bills.forEach(function(b){if(!b.ts){b.ts=1;ch=true;}});
   if(!S.daysTs&&Object.keys(S.days||{}).length){S.daysTs=1;ch=true;}
   if(!S.budgetsTs&&Object.keys(S.budgets||{}).length){S.budgetsTs=1;ch=true;}
+  if(!S.cardsTs&&(S.cards||[]).length){S.cardsTs=1;ch=true;}
   return ch;
 }
 async function cloudStart(){
@@ -1554,18 +1561,20 @@ async function cloudListen(uid){
 async function applyRemote(key,d){
   S.tomb=S.tomb||{};S.seen=S.seen||{};
   var isE=key.indexOf("e_")===0,isB=key.indexOf("b_")===0,id=key.slice(2),list=isE?S.entries:isB?S.bills:null;
-  var idx=list?list.findIndex(function(x){return x.id===id;}):-1,cur=list?(idx>=0?list[idx].ts||0:0):key==="budgets"?(S.budgetsTs||0):(S.daysTs||0);
+  var idx=list?list.findIndex(function(x){return x.id===id;}):-1,cur=list?(idx>=0?list[idx].ts||0:0):key==="budgets"?(S.budgetsTs||0):key==="cards"?(S.cardsTs||0):(S.daysTs||0);
   if((d.ts||0)<=Math.max(cur,S.tomb[key]||0))return false;
   S.seen[key]=d.ts;delete S.tomb[key];
   if(d.del){
     if(list&&idx>=0){var gone=list[idx];list.splice(idx,1);[gone.receiptId,gone.receiptId2].forEach(function(r){if(r)recDel(r).catch(function(){});});}
     else if(key==="days"){S.days={};S.daysTs=d.ts;}
     else if(key==="budgets"){S.budgets={};S.budgetsTs=d.ts;}
+    else if(key==="cards"){S.cards=[];S.cardsTs=d.ts;}
     return true;
   }
   var rec=JSON.parse(new TextDecoder().decode(await unseal(DEK,{iv:fromBytes(d.iv),ct:fromBytes(d.ct)})));
   if(key==="days"){S.days=rec||{};S.daysTs=d.ts;return true;}
   if(key==="budgets"){S.budgets=rec||{};S.budgetsTs=d.ts;return true;}
+  if(key==="cards"){S.cards=rec&&Array.isArray(rec.list)?rec.list:[];S.cardsTs=d.ts;return true;}
   rec.id=id;rec.ts=d.ts;
   if(idx>=0)list[idx]=rec;else list.push(rec);
   if(isE)sortEntries(S.entries);
@@ -1587,9 +1596,10 @@ async function cloudPush(){
     S.bills.forEach(function(b){if((b.ts||0)>mark&&seen["b_"+b.id]!==b.ts)ops.push(["b_"+b.id,b,b.ts]);});
     if((S.daysTs||0)>mark&&seen.days!==S.daysTs)ops.push(["days",S.days,S.daysTs]);
     if((S.budgetsTs||0)>mark&&seen.budgets!==S.budgetsTs)ops.push(["budgets",S.budgets||{},S.budgetsTs]);
+    if((S.cardsTs||0)>mark&&seen.cards!==S.cardsTs)ops.push(["cards",{list:S.cards||[]},S.cardsTs]);
     Object.keys(S.tomb||{}).forEach(function(k){if(S.tomb[k]>mark)ops.push([k,null,S.tomb[k]]);});
     [S.entries,S.bills].forEach(function(l){l.forEach(function(r){if((r.ts||0)>top)top=r.ts;});});
-    top=Math.max(top,S.daysTs||0,S.budgetsTs||0);Object.keys(S.tomb||{}).forEach(function(k){top=Math.max(top,S.tomb[k]);});
+    top=Math.max(top,S.daysTs||0,S.budgetsTs||0,S.cardsTs||0);Object.keys(S.tomb||{}).forEach(function(k){top=Math.max(top,S.tomb[k]);});
     for(var i=0;i<ops.length;i+=200){
       var batch=fdb.batch();
       for(var j=i;j<Math.min(i+200,ops.length);j++){
@@ -1642,6 +1652,7 @@ async function cloudJoin(pass){
   S.entries.forEach(function(e){e.ts=Math.max(e.ts||0,1);});S.bills.forEach(function(b){b.ts=Math.max(b.ts||0,1);});
   if(Object.keys(S.days||{}).length)S.daysTs=Math.max(S.daysTs||0,1);
   if(Object.keys(S.budgets||{}).length)S.budgetsTs=Math.max(S.budgetsTs||0,1);
+  if((S.cards||[]).length)S.cardsTs=Math.max(S.cardsTs||0,1);
   S.seen={};await persist();await kvSet("pushed:"+cuser.uid,0);await kvSet("photosUp:"+cuser.uid,{});
   await rememberKey();cloudConflict=null;await cloudStart();
 }
@@ -1786,7 +1797,7 @@ async function pkOpen(ak,pk){
 }
 function pkToCloud(pk){return {mid:pk.mid,iv:toBytes(pk.iv),ct:toBytes(pk.ct)};}
 function pkFromCloud(p){return p&&p.mid?{mid:p.mid,iv:fromBytes(p.iv),ct:fromBytes(p.ct)}:null;}
-function blankState(){S.entries=[];S.bills=[];S.days={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.tomb={};S.seen={};}
+function blankState(){S.entries=[];S.bills=[];S.days={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.cards=[];S.cardsTs=0;S.tomb={};S.seen={};}
 async function resealReceipts(nk){
   var ids=await recKeys();
   for(var i=0;i<ids.length;i++){var r=await recGet(ids[i]);if(!r)continue;try{var b=await seal(nk,await unseal(DEK,r));await recSet(ids[i],{iv:b.iv,ct:b.ct,type:r.type});}catch(e){}}
@@ -1815,6 +1826,7 @@ async function pxRekey(ak,mid){
   S.entries.forEach(function(e){e.ts=Math.max(e.ts||0,1);});S.bills.forEach(function(b){b.ts=Math.max(b.ts||0,1);});
   if(Object.keys(S.days||{}).length)S.daysTs=Math.max(S.daysTs||0,1);
   if(Object.keys(S.budgets||{}).length)S.budgetsTs=Math.max(S.budgetsTs||0,1);
+  if((S.cards||[]).length)S.cardsTs=Math.max(S.cardsTs||0,1);
   S.seen={};
   await persist();await rememberKey();
   if(cuser){
@@ -1835,6 +1847,7 @@ async function pxAdopt(ak,raw){
   S.entries.forEach(function(e){e.ts=Math.max(e.ts||0,1);});S.bills.forEach(function(b){b.ts=Math.max(b.ts||0,1);});
   if(Object.keys(S.days||{}).length)S.daysTs=Math.max(S.daysTs||0,1);
   if(Object.keys(S.budgets||{}).length)S.budgetsTs=Math.max(S.budgetsTs||0,1);
+  if((S.cards||[]).length)S.cardsTs=Math.max(S.cardsTs||0,1);
   await persist();await rememberKey();
   var uid=cuser.uid;await kvSet("pulled:"+uid,0);
   if(!(old&&raw.from&&raw.from===old.vid)){await kvSet("pushed:"+uid,0);S.seen={};await persist();}
@@ -1950,7 +1963,7 @@ async function pxLockSubmit(pass,pass2){
 
 
 /* ---------- Layout: bottom tab bar, Home, More ---------- */
-var SUBOF={bills:1,budgets:1,inbox:1,import:1,settings:1,subs:1,warranty:1};
+var SUBOF={cards:1,bills:1,budgets:1,inbox:1,import:1,settings:1,subs:1,warranty:1};
 function go(tab){if(S.tab!==tab){S.tab=tab;try{window.scrollTo(0,0);}catch(e){}}render();}
 function flagGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function flagSet(k){try{localStorage.setItem(k,"1");}catch(e){}}
@@ -1978,6 +1991,7 @@ function viewMore(v){
   var need=S.entries.filter(function(e){return e.needsDetails;}).length,soon=billsDueSoon().length,nb=Object.keys(S.budgets||{}).length;
   var rows=[["bills","Bills",S.bills.length?(soon?soon+(soon===1?" bill due soon":" bills due soon"):S.bills.length+(S.bills.length===1?" monthly bill":" monthly bills")):"Rent, phone, insurance, subscriptions",soon],
     ["budgets","Budgets",nb?nb+(nb===1?" category has":" categories have")+" a monthly limit":"Set a monthly limit per category",0],
+    ["cards","Your cards",(S.cards||[]).length?(S.cards||[]).map(cardLabel).slice(0,3).join(", "):"Name your cards to see which one you used",0],
     ["inbox","Needs details",need?need+(need===1?" bank row to describe":" bank rows to describe"):"Nothing waiting",need],
     subMoreRow(),warrantyMoreRow(),
     ["import","Bank import","Bring in a CSV from online banking",0],
@@ -2153,7 +2167,7 @@ function svgI(d,cls){
   var p=document.createElementNS("http://www.w3.org/2000/svg","path");p.setAttribute("d",d);s.appendChild(p);return s;
 }
 function catIcon(c){var k=CATICON[c]?c:"unsorted";var b=h("span",{class:"cic cat-"+k});b.appendChild(svgI(CATICON[k]));return b;}
-var PAGETITLE={home:"Tally",log:"Purchases",returns:"Returns",more:"More",bills:"Bills",budgets:"Budgets",inbox:"Needs details",import:"Bank import",settings:"Account",subs:"Subscriptions",warranty:"Warranties"};
+var PAGETITLE={cards:"Your cards",home:"Tally",log:"Purchases",returns:"Returns",more:"More",bills:"Bills",budgets:"Budgets",inbox:"Needs details",import:"Bank import",settings:"Account",subs:"Subscriptions",warranty:"Warranties"};
 function paintTitle(){var t=$("pageTitle");if(t)t.textContent=PAGETITLE[S.tab]||"Tally";$("todayLabel").hidden=S.tab!=="home";}
 
 /* Category and payment pickers mirror the hidden selects, so every place that sets select.value keeps working. */
@@ -2168,12 +2182,10 @@ function buildPickers(){
     var b=h("button",{type:"button",class:"catopt",role:"radio","aria-checked":"false","data-v":c[0],onclick:function(){var s=$("f-cat");s.value=s.value===c[0]?"":c[0];s.dispatchEvent(new Event("change"));}},catIcon(c[0]),h("span",{text:c[1].replace(" & gas","").replace("Rent & utilities","Rent & bills").replace("Work & business","Work")}));
     cp.append(b);
   });
-  PAYS.forEach(function(p){
-    pp.append(h("button",{type:"button",class:"payopt",role:"radio","aria-checked":"false","data-v":p,text:p,onclick:function(){var s=$("f-pay");s.value=s.value===p?"":p;s.dispatchEvent(new Event("change"));}}));
-  });
+
   function sync(box,sel){box.querySelectorAll("[data-v]").forEach(function(b){b.setAttribute("aria-checked",b.dataset.v===sel.value?"true":"false");});}
   hookSelect($("f-cat"),function(){sync(cp,$("f-cat"));});
-  hookSelect($("f-pay"),function(){sync(pp,$("f-pay"));});
+  hookSelect($("f-pay"),function(){syncPay();});
   // file inputs: the visible label-buttons follow the hidden inputs
   new MutationObserver(function(){$("f-photoBtn").hidden=$("f-receipt").hidden;$("f-photo2Btn").hidden=$("f-receipt").hidden;}).observe($("f-receipt"),{attributes:true,attributeFilter:["hidden"]});
   $("f-receipt").addEventListener("change",function(){$("f-photoLab").textContent="Change photo";});
@@ -2186,6 +2198,7 @@ function fitAmount(){var x=$("f-amount");x.style.width=Math.max(4,(x.value||x.pl
 $("f-amount").addEventListener("input",fitAmount);
 function entryOpened(e){
   setTimeout(fitAmount,0);
+  $("f-card").value=(e&&e.cardId)||"";buildPayPick();fillSuggest();hint("");amountFromItems=false;renderItemEd();
   var ed=e&&e.id?e:null;
   $("f-again").hidden=!(ed&&!ed.needsDetails&&!ed.billId&&ed.what);
   $("f-view").hidden=!(ed&&ed.receiptId);
@@ -2216,12 +2229,156 @@ function heroCard(){
   return box;
 }
 
+
+/* ---------- Item list editor (the stored format stays "id | name | price | category") ---------- */
+var amountFromItems=false;
+function serialItems(list){return list.map(function(it){return (it.id||"-")+" | "+(it.name||"")+" | "+(it.cost===""?"":it.cost)+(it.cat?" | "+CATNAME[it.cat]:"");}).join("\n");}
+var TA_VALUE=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value");
+Object.defineProperty($("f-items"),"value",{configurable:true,get:function(){return TA_VALUE.get.call(this);},set:function(v){TA_VALUE.set.call(this,v);renderItemEd();}});
+function itemRows(){return [].slice.call($("itemEd").querySelectorAll(".irow"));}
+function itemsFromEd(){
+  return itemRows().map(function(r){return {id:r.dataset.id||"",cat:r.dataset.cat||"",name:r.querySelector(".iname").value.trim().replace(/\|/g,"/"),cost:r.querySelector(".icost").value.trim()};})
+    .filter(function(it){return it.name||it.cost;});
+}
+function itemsChanged(){
+  var list=itemsFromEd();TA_VALUE.set.call($("f-items"),serialItems(list));
+  var sumI=Math.round(list.reduce(function(t,i){return t+(parseAmount(i.cost)||0);},0)*100)/100;
+  var amt=$("f-amount");
+  if(list.length&&sumI>0&&(amountFromItems||!amt.value)){amt.value=sumI.toFixed(2);amountFromItems=true;fitAmount();}
+  paintItemSum(list.length,sumI);
+}
+function paintItemSum(n,sumI){
+  var s=$("itemSum");s.textContent="";if(!n)return;
+  var amt=parseFloat($("f-amount").value)||0,diff=Math.round((amt-sumI)*100)/100;
+  s.append(h("span",{text:n+(n===1?" item · ":" items · ")+money(sumI)}));
+  if(amt>0&&Math.abs(diff)>=0.01&&!amountFromItems){
+    s.append(h("span",{class:"muted",text:" · "+money(Math.abs(diff))+(diff>0?" less than the amount (tax or tip?)":" more than the amount")}),
+      h("button",{type:"button",class:"linkbtn",text:"Use "+money(sumI)+" as the amount",onclick:function(){$("f-amount").value=sumI.toFixed(2);amountFromItems=true;fitAmount();paintItemSum(n,sumI);}}));
+  }
+}
+function itemRow(it){
+  var r=h("div",{class:"irow"});r.dataset.id=it.id||"";r.dataset.cat=it.cat||"";
+  var nm=h("input",{type:"text",class:"iname",maxlength:"60",placeholder:"Item","aria-label":"Item name",autocomplete:"off",value:it.name||""});
+  var pr=h("input",{type:"text",class:"icost",inputmode:"decimal",placeholder:"0.00","aria-label":"Price of "+(it.name||"item"),autocomplete:"off",value:it.cost===""||it.cost==null?"":(+it.cost).toFixed(2)});
+  nm.addEventListener("input",itemsChanged);pr.addEventListener("input",itemsChanged);
+  pr.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();addItemRow(true);}});
+  nm.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();pr.focus();}});
+  var rm=h("button",{type:"button",class:"irm","aria-label":"Remove "+(it.name||"this item"),onclick:function(){r.remove();itemsChanged();}});rm.appendChild(svgI(ICON.x));
+  r.append(h("div",{class:"itop"},nm,h("span",{class:"icur","aria-hidden":"true",text:"$"}),pr,rm));
+  if(it.id)r.append(h("span",{class:"iid",text:"Item # "+it.id}));
+  return r;
+}
+function addItemRow(focus){var r=itemRow({name:"",cost:""});$("itemRows").append(r);if(focus)r.querySelector(".iname").focus();}
+function renderItemEd(){
+  var ed=$("itemEd");if(!ed)return;ed.textContent="";
+  var list=textToItems(TA_VALUE.get.call($("f-items")));
+  var rows=h("div",{id:"itemRows",class:"irows"});list.forEach(function(it){rows.append(itemRow(it));});
+  ed.append(rows,h("div",{class:"iactions"},h("button",{type:"button",class:"btn quiet sm",onclick:function(){T("item_add");addItemRow(true);}},"+ Add item")),h("p",{id:"itemSum",class:"isum"}));
+  paintItemSum(list.length,Math.round(list.reduce(function(t,i){return t+(+i.cost||0);},0)*100)/100);
+}
+$("f-amount").addEventListener("input",function(){amountFromItems=false;});
+
+/* ---------- Remembered places and purchases ---------- */
+function pastWith(field,val){var v=(val||"").trim().toLowerCase();if(!v)return null;
+  for(var i=0;i<S.entries.length;i++){var e=S.entries[i];if(!e.needsDetails&&(e[field]||"").trim().toLowerCase()===v)return e;}return null;}
+function fillSuggest(){
+  var w={},p={},dw=$("dl-what"),dp=$("dl-where");dw.textContent="";dp.textContent="";
+  S.entries.forEach(function(e){
+    if(e.needsDetails)return;
+    var a=(e.what||"").trim(),b=(e.where||"").trim();
+    if(a&&!/\+\d+ more$/.test(a)&&!w[a.toLowerCase()]&&Object.keys(w).length<80){w[a.toLowerCase()]=1;dw.append(h("option",{value:a}));}
+    if(b&&!p[b.toLowerCase()]&&Object.keys(p).length<80){p[b.toLowerCase()]=1;dp.append(h("option",{value:b}));}
+  });
+}
+function hint(t){var x=$("f-hint");x.textContent=t||"";x.hidden=!t;}
+$("f-what").addEventListener("change",function(){
+  if(editing)return;var e=pastWith("what",this.value);if(!e)return;
+  var did=[];
+  if(!$("f-where").value&&e.where){$("f-where").value=e.where;did.push(e.where);}
+  if(!$("f-cat").value&&e.category)$("f-cat").value=e.category;
+  if(!$("f-pay").value&&e.pay){$("f-pay").value=e.pay;$("f-card").value=e.cardId||"";}
+  if(!$("f-amount").value&&e.amount>0){$("f-amount").value=(+e.amount).toFixed(2);fitAmount();did.unshift(money(e.amount));}
+  if(did.length){T("suggest_used");hint("Filled in from last time: "+did.join(" at ")+". Change anything that's different.");}
+});
+$("f-where").addEventListener("change",function(){
+  if(editing)return;var e=pastWith("where",this.value);if(!e)return;
+  if(!$("f-cat").value&&e.category)$("f-cat").value=e.category;
+  if(!$("f-pay").value&&e.pay){$("f-pay").value=e.pay;$("f-card").value=e.cardId||"";}
+});
+
+/* ---------- Your cards: a nickname and the last 4 digits, never the full number ---------- */
+function cardLabel(c){return c?(c.name||(c.kind==="debit"?"Debit card":"Credit card"))+(c.last4?" ··"+c.last4:""):"";}
+function cardById(id){return (S.cards||[]).filter(function(c){return c.id===id;})[0]||null;}
+function cardByLast4(l4){return l4?(S.cards||[]).filter(function(c){return c.last4===l4;})[0]||null:null;}
+function payOf(c){return c.kind==="debit"?"Debit":"Credit card";}
+var IN_VALUE=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value");
+Object.defineProperty($("f-card"),"value",{configurable:true,get:function(){return IN_VALUE.get.call(this);},set:function(v){IN_VALUE.set.call(this,v);syncPay();}});
+function buildPayPick(){
+  var pp=$("payPick");pp.textContent="";
+  var cards=S.cards||[],hasCredit=cards.some(function(c){return c.kind!=="debit";}),hasDebit=cards.some(function(c){return c.kind==="debit";});
+  cards.forEach(function(c){
+    pp.append(h("button",{type:"button",class:"payopt card",role:"radio","aria-checked":"false","data-card":c.id,onclick:function(){var on=$("f-card").value===c.id;$("f-card").value=on?"":c.id;$("f-pay").value=on?"":payOf(c);}},
+      h("span",{class:"cdot "+(c.kind==="debit"?"deb":"cre"),"aria-hidden":"true"}),cardLabel(c)));
+  });
+  PAYS.forEach(function(p){
+    if((p==="Credit card"&&hasCredit)||(p==="Debit"&&hasDebit))return;
+    pp.append(h("button",{type:"button",class:"payopt",role:"radio","aria-checked":"false","data-v":p,text:p,onclick:function(){var s=$("f-pay");var on=s.value===p&&!$("f-card").value;$("f-card").value="";s.value=on?"":p;}}));
+  });
+  pp.append(h("button",{type:"button",class:"payopt add",text:cards.length?"+ Card":"+ Add your card",onclick:function(){T("card_add_from_form");openCard(null,"",function(c){$("f-card").value=c.id;$("f-pay").value=payOf(c);});}}));
+  syncPay();
+}
+function syncPay(){
+  var pp=$("payPick");if(!pp)return;var cid=$("f-card").value,pv=$("f-pay").value;
+  pp.querySelectorAll("[data-card]").forEach(function(b){b.setAttribute("aria-checked",b.dataset.card===cid?"true":"false");});
+  pp.querySelectorAll("[data-v]").forEach(function(b){b.setAttribute("aria-checked",!cid&&b.dataset.v===pv?"true":"false");});
+}
+var cardDone=null,cardEditing=null;
+function openCard(c,last4,done){
+  cardEditing=c;cardDone=done||null;
+  $("cd-name").value=c?c.name||"":"";$("cd-last4").value=c?c.last4||"":(last4||"");
+  $("cd-credit").checked=!c||c.kind!=="debit";$("cd-debit").checked=!!(c&&c.kind==="debit");
+  $("cd-err").hidden=true;$("cd-title").textContent=c?"Edit card":"Add a card";$("cd-del").hidden=!c;
+  $("cardDlg").showModal();setTimeout(function(){$(last4?"cd-name":"cd-name").focus();},50);
+}
+$("cd-last4").addEventListener("input",function(){var d=this.value.replace(/\D/g,"");if(d.length>4){d=d.slice(-4);$("cd-err").textContent="Only the last 4 digits are kept. Tally never stores a full card number.";$("cd-err").hidden=false;}this.value=d;});
+$("cd-cancel").addEventListener("click",function(){$("cardDlg").close();});
+$("cd-del").addEventListener("click",async function(){
+  if(!cardEditing)return;var id=cardEditing.id;
+  await store.setCards((S.cards||[]).filter(function(c){return c.id!==id;}));T("card_delete");$("cardDlg").close();toast("Card removed. Purchases paid with it keep their details.");
+});
+$("cardForm").addEventListener("submit",async function(ev){
+  ev.preventDefault();
+  var name=$("cd-name").value.trim().slice(0,40),l4=$("cd-last4").value.replace(/\D/g,""),err=$("cd-err");
+  if(l4&&l4.length!==4){err.textContent="Enter exactly 4 digits, or leave it empty.";err.hidden=false;return;}
+  if(!name&&!l4){err.textContent="Give the card a name, its last 4 digits, or both.";err.hidden=false;return;}
+  var other=cardByLast4(l4);if(l4&&other&&(!cardEditing||other.id!==cardEditing.id)){err.textContent=cardLabel(other)+" already ends in "+l4+".";err.hidden=false;return;}
+  var c=Object.assign({},cardEditing||{id:rid()},{name:name,last4:l4,kind:$("cd-debit").checked?"debit":"credit"});
+  var list=(S.cards||[]).filter(function(x){return x.id!==c.id;});list.push(c);
+  await store.setCards(list);T(cardEditing?"card_edit":"card_add");$("cardDlg").close();
+  if(cardDone)cardDone(c);cardDone=null;
+});
+function cardSpend(c,m){return sum(S.entries.filter(function(e){return !e.needsDetails&&e.cardId===c.id&&ym(e.date||"")===m;}));}
+function viewCards(v){
+  v.append(h("p",{class:"muted",text:"Name your cards so you can tell them apart. Only a nickname and the last 4 digits are kept, encrypted like everything else. When a receipt or card screenshot shows the last 4 digits, Tally picks the card for you."}));
+  var cards=S.cards||[],m=ym(today());
+  if(cards.length){
+    var list=h("div",{class:"mlist"});
+    cards.forEach(function(c){list.append(h("button",{type:"button",class:"mrow",onclick:function(){openCard(c);}},
+      h("span",{class:"cdot big "+(c.kind==="debit"?"deb":"cre"),"aria-hidden":"true"}),
+      h("span",{class:"mtx"},h("span",{class:"mt",text:cardLabel(c)}),h("span",{class:"ms",text:(c.kind==="debit"?"Debit":"Credit")+" · "+money(cardSpend(c,m))+" this month"})),
+      h("span",{class:"chev","aria-hidden":"true",text:"›"})));});
+    v.append(list);
+  }
+  v.append(h("div",{class:"btnrow"},h("button",{type:"button",class:"btn primary",text:"Add a card",onclick:function(){openCard(null);}})));
+}
+
 buildPickers();
 
 /* ---------- Quick check after a scan: store, date and total at a glance ---------- */
 function relDay(d){var n=-daysLeft(d);return n===0?"today":n===1?"yesterday":n>1&&n<7?n+" days ago":"";}
 function time12(t){var m=/^(\d{1,2}):(\d{2})/.exec(t||"");if(!m)return "";var hh=+m[1];return (hh%12||12)+":"+m[2]+(hh<12?" AM":" PM");}
 function quickCheck(r){
+  if($("qcDlg").open)$("qcDlg").close();
   var dlg=$("qcDlg"),box=$("qcBody");box.textContent="";
   var where=$("f-where").value.trim(),date=$("f-date").value,tm=$("f-time").value,amt=parseFloat($("f-amount").value)||0;
   var items=textToItems($("f-items").value),cat=$("f-cat").value,pay=$("f-pay").value;
@@ -2229,7 +2386,7 @@ function quickCheck(r){
   var same=null;
   if(!dup&&r&&r.kind==="card")same=S.entries.filter(function(e){return e.date===date&&Math.abs((+e.amount||0)-amt)<0.005;})[0]||null;
   if(same)dup=same;
-  function jump(id){return function(){T("qc_fix_"+id.replace("f-",""));dlg.close();var el=$(id);if(id==="f-items")$("f-more").open=true;setTimeout(function(){el.scrollIntoView({block:"center"});try{el.focus({preventScroll:true});}catch(e){}},50);};}
+  function jump(id){return function(){T("qc_fix_"+id.replace("f-",""));dlg.close();var el=$(id);if(id==="f-items"){$("f-more").open=true;el=$("itemEd").querySelector("input")||$("itemEd");}if(id==="f-pay")el=$("payPick").querySelector("button")||el;setTimeout(function(){el.scrollIntoView({block:"center"});try{el.focus({preventScroll:true});}catch(e){}},50);};}
   function line(label,value,note,warn,id){
     return h("button",{type:"button",class:"qcl"+(warn?" warn":""),onclick:jump(id),"aria-label":label+": "+value+(note?". "+note:"")+". Tap to change."},
       h("span",{class:"qk",text:label}),h("span",{class:"qv"},h("span",{text:value}),note?h("span",{class:"qn",text:note}):null),h("span",{class:"chev","aria-hidden":"true",text:"›"}));
@@ -2244,7 +2401,11 @@ function quickCheck(r){
     var sumI=Math.round(items.reduce(function(t,i){return t+(+i.cost||0);},0)*100)/100;
     box.append(line("Items",items.length+(items.length===1?" item":" items"),r&&r.verified?"Prices add up to the receipt total.":"Prices don't add up to the total ("+money(sumI)+"). Worth a look.",!(r&&r.verified),"f-items"));
   }
-  if(pay)box.append(line("Paid with",pay,"",false,"f-pay"));
+  var qcc=cardById($("f-card").value);
+  if(qcc)box.append(line("Paid with",cardLabel(qcc),r&&r.last4&&qcc.last4===r.last4?"Picked from the last 4 digits.":"",false,"f-pay"));
+  else if(r&&r.last4)box.append(h("button",{type:"button",class:"qcl",onclick:function(){T("card_add_from_scan");dlg.close();openCard(null,r.last4,function(c){$("f-card").value=c.id;$("f-pay").value=payOf(c);quickCheck(r);});},"aria-label":"Card ending "+r.last4+". Not in your cards yet. Tap to name it."},
+    h("span",{class:"qk",text:"Paid with"}),h("span",{class:"qv"},h("span",{text:"Card ending "+r.last4}),h("span",{class:"qn",text:"Not in your cards yet. Tap to name it."})),h("span",{class:"chev","aria-hidden":"true",text:"›"})));
+  else if(pay)box.append(line("Paid with",pay,"",false,"f-pay"));
   if(dup&&same)box.append(h("p",{class:"qdup",role:"alert",text:"You may already have this one: "+title(same)+(same.where&&same.where!==title(same)?" at "+same.where:"")+", "+money(same.amount)+" on "+dayLabel(same.date)+(same.receiptId?", logged from its receipt":"")+"."}));
   else if(dup)box.append(h("p",{class:"qdup",role:"alert",text:r&&r.kind==="card"?"You already logged this charge: "+title(dup)+", "+money(dup.amount)+" on "+dayLabel(dup.date)+" at "+time12(dup.time)+".":"You already logged this receipt on "+dayLabel(dup.date)+" ("+title(dup)+"). Same receipt number, time, total and items."}));
   var acts=$("qcActs");acts.textContent="";
@@ -2282,7 +2443,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v18",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v19",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

@@ -201,6 +201,48 @@ var PRICE_END=/\$?(\d{1,4}[.,]\d{2})\s*(-?)\s*[A-Z0-9 ]{0,5}$/;
 var NOT_ITEM=/member|invoice|auth|reference|seq#|app#|approved|balance|amount|total|\btax\b|change|card|purchase|copy|records|items|\b(ave|avenue|st|street|rd|road|blvd|drive|hwy|unit|suite)\b/i;
 var HEADER=/\b\d{3}[-. ]\d{3}[-. ][\dZOzo]{4}\b|\b[A-Z]\d[A-Z] ?\d[A-Z]\d\b|\b(?:st|op|te|tr|tc|reg|lane|cashier|store)\s*#|\bm[g9]r\b|survey|www\.|\.(?:ca|com)\b|gift cards?|contest|rules|\bsold\b/i;
 /* A date printed as 11/20/26 can be month-first (Walmart, Costco) or day-first; pick the reading that isn't in the future. */
+
+/* ---------- Card-app screenshots (Wealthsimple, bank apps): one transaction, no items ---------- */
+var MONTHS3=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+var CARDCAT=[[/restaurant|coffee|caf[eé]|fast ?food|dining|food|bar\b|takeout|delivery/i,"eating"],[/grocer|supermarket/i,"groceries"],
+  [/gas|fuel|transport|transit|parking|taxi|ride|auto|car\b|travel|air/i,"transport"],[/entertain|movie|cinema|stream|game|music|sport|recreation|hobb/i,"fun"],
+  [/health|pharm|drug|medical|dental|fitness|gym|personal care/i,"health"],[/subscri/i,"subs"],[/bill|utilit|phone|internet|rent|insurance|housing/i,"housing"],
+  [/business|office|work/i,"work"],[/shop|retail|cloth|electronic|department|home|hardware|general merch/i,"shopping"]];
+function monthDate(mon,d,y){var k=MONTHS3.indexOf(String(mon).slice(0,3).toLowerCase());return k<0?null:parseDate(y+"-"+z(k+1)+"-"+z(+d));}
+function ampm(h,mi,ap){h=+h;if(/p/i.test(ap)&&h<12)h+=12;if(/a/i.test(ap)&&h===12)h=0;return z(h)+":"+mi;}
+function parseCardScreen(lines,text){
+  var low=text.toLowerCase(),sig=0;
+  [/(transaction|purchase|posted)\s*date/,/card\s*(number|ending)|[·•*.]{3,}\s?\d{4}/,/\b(settled|authori[sz]ed|pending|posted)\b/,/dispute/,/cash\s?back|rewards? (earned|points)/].forEach(function(r){if(r.test(low))sig++;});
+  if(sig<2||/sub\s?total|\bhst\b|\bgst\b|items? sold/.test(low))return null;
+  var AMT=/([-–—+]?)\s*[S$]\s?(\d{1,3}(?:[,\s]?\d{3})*[.,]\d{2})\s*(?:CAD|USD|C\$)?/i;
+  var out={kind:"card",where:"",what:"",amount:null,date:null,time:null,category:"",pay:null,receipt_no:null,items:[],verified:false,pending:false,refund:false},i,m,amtIdx=-1;
+  for(i=0;i<lines.length;i++){if(/^amount\b/i.test(lines[i])&&(m=AMT.exec(lines[i]))){out.amount=parseAmount(m[2]);out.refund=m[1]==="+";break;}}
+  for(i=0;i<Math.min(lines.length,10);i++){m=AMT.exec(lines[i]);if(m&&lines[i].replace(AMT,"").replace(/[^A-Za-z]/g,"").length<4){amtIdx=i;if(out.amount==null){out.amount=parseAmount(m[2]);out.refund=m[1]==="+";}break;}}
+  for(i=(amtIdx>0?amtIdx:4)-1;i>=0;i--){
+    var l=lines[i];if(/^\d{1,2}:\d{2}\b/.test(l)||/^(category|account|status|type)\b/i.test(l))continue;
+    if(l.replace(/[^A-Za-z]/g,"").length>=3){out.where=l;break;}
+  }
+  var w=out.where.replace(/^(sq|tst|sp|pp|ppl|paypal|pos|purchase)\s*\*\s*/i,"").replace(/\s*[#*]\s*\d.*$/,"").replace(/\s*\(.*$/,"").replace(/([a-z])([A-Z])/g,"$1 $2").replace(/\s+\d{3,}\b.*$/,"").replace(/\s+/g," ").trim();
+  var wl=w.toLowerCase().replace(/\s+/g," ");
+  for(i=0;i<STORES.length;i++)if(wl.indexOf(STORES[i][0])>=0||wl.replace(/ /g,"").indexOf(STORES[i][0].replace(/ /g,""))>=0){w=STORES[i][1];break;}
+  out.where=out.what=w.slice(0,60);
+  var tIdx=-1;for(i=0;i<lines.length;i++)if(/(transaction|purchase)\s*date|^date\b/i.test(lines[i])){tIdx=i;break;}
+  var dsrc=tIdx>=0?lines.slice(tIdx,tIdx+2).join(" "):text;
+  if((m=/([A-Za-z]{3,9})\.?\s*(\d{1,2}),?\s*(20\d{2})/.exec(dsrc)))out.date=monthDate(m[1],m[2],m[3]);
+  if(!out.date)out.date=receiptDate(dsrc);
+  var tsrc=tIdx>=0?lines.slice(tIdx,tIdx+3).join(" "):text.replace(/^\d{1,2}:\d{2}.*$/m,"");
+  if((m=/\b(\d{1,2}):(\d{2})\s*([ap])\.?\s*m\b/i.exec(tsrc)))out.time=ampm(m[1],m[2],m[3]);
+  else if(tIdx>=0&&(m=/\b([01]?\d|2[0-3]):([0-5]\d)\b/.exec(tsrc)))out.time=z(+m[1])+":"+m[2];
+  var cat="";for(i=0;i<lines.length;i++){if(/^category\b/i.test(lines[i])){cat=lines[i].replace(/^category\s*:?\s*/i,"")||lines[i+1]||"";break;}}
+  for(i=0;i<CARDCAT.length&&cat;i++)if(CARDCAT[i][0].test(cat)){out.category=CARDCAT[i][1];break;}
+  if(!out.category)out.category=guessCat(w)||"";
+  out.pay=/credit\s?card|\bvisa\b|master\s?card|\bamex\b|american express/i.test(text)?"Credit card":/debit/i.test(text)?"Debit":null;
+  if((m=/\bstatus\s*:?\s*([A-Za-z]+)/i.exec(text)))out.pending=/authori|pending/i.test(m[1]);else out.pending=/\b(authori[sz]ed|pending)\b/i.test(text.replace(/cash\s?back\s?pending/ig,""));
+  if(/\btype\s*:?\s*(refund|credit|return)/i.test(text))out.refund=true;
+  if(!(out.amount>0)||!out.where)return null;
+  return out;
+}
+
 function receiptDate(text){
   var m,t=today(),best=null;
   if((m=/(20\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(text)))return parseDate(m[1]+"-"+m[2]+"-"+m[3]);
@@ -221,6 +263,7 @@ function parseReceiptBoxes(boxes){
   var lines=(boxes||[]).slice().sort(function(a,b){return a.y-b.y;}).map(function(b){return String(b.t||"").replace(/[：]/g,":").replace(/\s+/g," ").trim();}).filter(Boolean);
   var text=lines.join("\n");
   if(text.replace(/[^A-Za-z0-9]/g,"").length<12)return null;
+  var card=parseCardScreen(lines,text);if(card)return card;
   var low=text.toLowerCase(),out={where:"",what:"",amount:null,date:null,time:null,category:"",pay:null,receipt_no:null,items:[],verified:false},i,m;
   for(i=0;i<STORES.length;i++)if(low.indexOf(STORES[i][0])>=0){out.where=STORES[i][1];break;}
   if(!out.where)for(i=0;i<Math.min(3,lines.length);i++){
@@ -725,7 +768,9 @@ $("f-read").addEventListener("click",async function(){
       var tm=/^(\d{1,2}):(\d{2})/.exec(String(r.time||""));if(tm)$("f-time").value=z(+tm[1])+":"+tm[2];
       pendingReceipt={no:r.receipt_no==null?"":String(r.receipt_no).slice(0,40),time:tm?z(+tm[1])+":"+tm[2]:"",total:a>0?Math.round(a*100)/100:0};dupOk=false;
       suggestReturn();
-      readOk=true;note.textContent=r.verified?"Read on this phone. The item prices add up to the receipt total. Check the names, then save.":"Read on this phone. The item prices do not add up to the total, so check each line before saving.";
+      readOk=true;
+      if(r.kind==="card"){note.textContent="Read from a card app screenshot: store, amount, date and time. Card screens don't list items."+(r.pending?" This charge was still pending, so the amount can change when it settles.":"")+(r.refund?" This looks like a refund, not a purchase. Check before saving.":"");}
+      else note.textContent=r.verified?"Read on this phone. The item prices add up to the receipt total. Check the names, then save.":"Read on this phone. The item prices do not add up to the total, so check each line before saving.";
     }
   }catch(e){
     var c=e&&e.code;
@@ -738,7 +783,7 @@ $("f-read").addEventListener("click",async function(){
   btn.disabled=false;btn.textContent="Read this receipt on the phone";
   if(autoScan){
     autoScan=false;
-    if(readOk&&$("entryDlg").open&&$("f-err").hidden&&$("f-what").value.trim()&&parseFloat($("f-amount").value)>0){$("entryTitle").textContent="Check the details";if(r&&r.where&&$("f-where").value.trim())quickCheck(r);}
+    if(readOk&&$("entryDlg").open&&$("f-err").hidden&&$("f-what").value.trim()&&parseFloat($("f-amount").value)>0){$("entryTitle").textContent="Check the details"+batchTag();if(r&&r.where&&$("f-where").value.trim())quickCheck(r);}
     else if($("entryDlg").open)$("entryTitle").textContent=readOk?"Check the details":"Add the details";
   }
 });
@@ -917,14 +962,25 @@ function openChooser(date){
 $("chooseCancel").addEventListener("click",function(){$("chooseDlg").close();});
 $("chooseManual").addEventListener("click",function(){T("purchase_manual");$("chooseDlg").close();openEntry({date:chooseDate});});
 $("receiptImg").addEventListener("click",function(){this.classList.toggle("zoom");});
-$("scanFile").addEventListener("change",async function(){
-  var f=this.files&&this.files[0];if(!f)return;
+var scanQueue=[],scanIdx=0,scanTotal=0;
+function batchTag(){return scanTotal>1?" ("+scanIdx+" of "+scanTotal+")":"";}
+$("scanFile").addEventListener("change",function(){
+  var fs=[].slice.call(this.files||[]).slice(0,20);this.value="";if(!fs.length)return;
   $("chooseDlg").close();
-  if(!/^image\//.test(f.type)){toast("Choose a photo of the receipt.");return;}
+  if(fs.length>1)T("receipt_scan_batch");
+  scanQueue=fs.slice(1);scanTotal=fs.length;scanIdx=1;scanOne(fs[0]);
+});
+$("entryDlg").addEventListener("close",function(){
+  if(!scanQueue.length){scanTotal=0;return;}
+  setTimeout(function(){if($("entryDlg").open)return;scanIdx++;scanOne(scanQueue.shift());},350);
+});
+async function scanOne(f){
+  if(!f)return;
+  if(!/^image\//.test(f.type)){toast("That file isn't a photo, so it was skipped.");if(scanQueue.length){scanIdx++;scanOne(scanQueue.shift());}return;}
   T("receipt_scan");
   if(f.size>20*1024*1024){toast("That photo is over 20 MB. Choose a smaller one.");return;}
   openEntry({date:chooseDate});
-  $("entryTitle").textContent="Reading your receipt on this phone…";
+  $("entryTitle").textContent="Reading on this phone…"+batchTag();
   pendingBlob=await shrink(f);pendingType="image";
   previewUrl=URL.createObjectURL(pendingBlob);
   var p=$("f-preview");p.src=previewUrl;p.hidden=false;
@@ -933,7 +989,7 @@ $("scanFile").addEventListener("change",async function(){
     $("entryTitle").textContent="Add the details";
     $("f-receiptNote").textContent=assets?"Photo attached. Receipt reading isn't available in this view, so type the details.":"This view can't read or keep the photo. Type the details.";
   }
-});
+}
 
 /* ---------- per-item categories ---------- */
 function guessItemCat(name){
@@ -2170,12 +2226,18 @@ function quickCheck(r){
   var where=$("f-where").value.trim(),date=$("f-date").value,tm=$("f-time").value,amt=parseFloat($("f-amount").value)||0;
   var items=textToItems($("f-items").value),cat=$("f-cat").value,pay=$("f-pay").value;
   var dateFound=!!(r&&r.date),dup=pendingReceipt?findDuplicate(Object.assign({},pendingReceipt,{total:amt}),items,date,null):null;
+  var same=null;
+  if(!dup&&r&&r.kind==="card")same=S.entries.filter(function(e){return e.date===date&&Math.abs((+e.amount||0)-amt)<0.005;})[0]||null;
+  if(same)dup=same;
   function jump(id){return function(){T("qc_fix_"+id.replace("f-",""));dlg.close();var el=$(id);if(id==="f-items")$("f-more").open=true;setTimeout(function(){el.scrollIntoView({block:"center"});try{el.focus({preventScroll:true});}catch(e){}},50);};}
   function line(label,value,note,warn,id){
     return h("button",{type:"button",class:"qcl"+(warn?" warn":""),onclick:jump(id),"aria-label":label+": "+value+(note?". "+note:"")+". Tap to change."},
       h("span",{class:"qk",text:label}),h("span",{class:"qv"},h("span",{text:value}),note?h("span",{class:"qn",text:note}):null),h("span",{class:"chev","aria-hidden":"true",text:"›"}));
   }
   box.append(h("div",{class:"qchead"},catIcon(cat),h("div",null,h("p",{class:"qstore",text:where}),h("p",{class:"qamt",text:money(amt)}))));
+  if(r&&r.kind==="card")box.append(h("p",{class:"qsrc",text:"From a card app screenshot. Card screens don't list items."}));
+  if(r&&r.pending)box.append(line("Status","Pending at the card","The amount can change when it settles.",true,"f-amount"));
+  if(r&&r.refund)box.append(line("Type","Looks like a refund","Check it's a purchase before saving.",true,"f-amount"));
   var rd=relDay(date);
   box.append(line("Date",dayLabel(date)+(tm?" · "+time12(tm):""),dateFound?(rd?"That's "+rd+".":""):"No date found on the receipt, so this is a guess.",!dateFound,"f-date"));
   if(items.length){
@@ -2183,16 +2245,17 @@ function quickCheck(r){
     box.append(line("Items",items.length+(items.length===1?" item":" items"),r&&r.verified?"Prices add up to the receipt total.":"Prices don't add up to the total ("+money(sumI)+"). Worth a look.",!(r&&r.verified),"f-items"));
   }
   if(pay)box.append(line("Paid with",pay,"",false,"f-pay"));
-  if(dup)box.append(h("p",{class:"qdup",role:"alert",text:"You already logged this receipt on "+dayLabel(dup.date)+" ("+title(dup)+"). Same receipt number, time, total and items."}));
+  if(dup&&same)box.append(h("p",{class:"qdup",role:"alert",text:"You may already have this one: "+title(same)+(same.where&&same.where!==title(same)?" at "+same.where:"")+", "+money(same.amount)+" on "+dayLabel(same.date)+(same.receiptId?", logged from its receipt":"")+"."}));
+  else if(dup)box.append(h("p",{class:"qdup",role:"alert",text:r&&r.kind==="card"?"You already logged this charge: "+title(dup)+", "+money(dup.amount)+" on "+dayLabel(dup.date)+" at "+time12(dup.time)+".":"You already logged this receipt on "+dayLabel(dup.date)+" ("+title(dup)+"). Same receipt number, time, total and items."}));
   var acts=$("qcActs");acts.textContent="";
   if(dup){
-    acts.append(h("button",{type:"button",class:"btn primary wide",text:"Don't save it again",onclick:function(){T("qc_dup_skip");dlg.close();closeEntry();toast("Not saved. It's already in your purchases.");}}),
+    acts.append(h("button",{type:"button",class:"btn primary wide",text:scanQueue.length?"Skip it, go to the next one":"Don't save it again",onclick:function(){T("qc_dup_skip");dlg.close();closeEntry();toast("Not saved. It's already in your purchases.");}}),
       h("button",{type:"button",class:"btn quiet wide",text:"It's a separate purchase",onclick:function(){T("qc_dup_keep");dupOk=true;dlg.close();$("entryForm").requestSubmit();}}));
   }else{
-    acts.append(h("button",{type:"button",class:"btn primary wide",text:"Yes, save it",onclick:function(){T("qc_yes");dlg.close();$("entryForm").requestSubmit();}}),
+    acts.append(h("button",{type:"button",class:"btn primary wide",text:scanQueue.length?"Yes, save and next":"Yes, save it",onclick:function(){T("qc_yes");dlg.close();$("entryForm").requestSubmit();}}),
       h("button",{type:"button",class:"btn quiet wide",text:"Something's off, let me fix it",onclick:function(){T("qc_fix");dlg.close();}}));
   }
-  $("qcTitle").textContent=dup?"Already logged":"Is this right?";
+  $("qcTitle").textContent=(same?"Already logged?":dup?"Already logged":"Is this right?")+batchTag();
   T("qc_shown");
   dlg.showModal();
 }
@@ -2219,7 +2282,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v17",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v18",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

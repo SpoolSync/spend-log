@@ -392,6 +392,7 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
 .qn{font-size:12.5px;font-weight:500;color:var(--muted)}
 .qcl.warn .qn{color:var(--ink)}
 .qdup{margin:0;padding:12px;border-radius:12px;background:color-mix(in srgb,var(--impulse) 12%,var(--paper));border:1px solid var(--impulse);font-weight:600;font-size:14px}
+.qsrc{margin:-4px 0 0;font-size:13px;color:var(--muted)}
 .qcacts{display:flex;flex-direction:column;gap:8px;margin-top:4px}
 /* chooser */
 #chooseDlg .form{padding-top:18px;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
@@ -541,7 +542,7 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
 <dialog id="chooseDlg" class="sheet" aria-labelledby="chooseTitle">
   <div class="form">
     <h2 id="chooseTitle">Log a purchase</h2>
-    <label class="choice" for="scanFile"><input type="file" id="scanFile" accept="image/*" class="vh"><span class="ct"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>Scan a receipt</span><span class="cd">Take or pick a photo. Tally reads the store, total and every item on the phone, then you check and save. The photo stays on your phone.</span></label>
+    <label class="choice" for="scanFile"><input type="file" id="scanFile" accept="image/*" multiple class="vh"><span class="ct"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>Scan receipts or card screenshots</span><span class="cd">Pick one photo or several. Tally reads the store, total, date and items on the phone, then you check each one. Photos stay on your phone.</span></label>
     <button type="button" class="choice" id="chooseManual"><span class="ct"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg>Type it in</span><span class="cd">What, how much and why. Add a receipt photo later, or never.</span></button>
     <div class="recent" id="recentPicks" hidden></div>
     <div class="btnrow"><button type="button" class="btn quiet" id="chooseCancel">Cancel</button></div>
@@ -598,11 +599,11 @@ dialog.qc::backdrop{background:rgba(10,20,30,.45)}
 <script src="firebase-app-compat.js"></script>
 <script src="firebase-auth-compat.js"></script>
 <script src="firebase-firestore-compat.js"></script>
-<script src="cloud.js?v=17"></script>
-<script src="pixora-summary.js?v=17"></script>
-<script src="pixora-usage.js?v=17"></script>
-<script src="subs.js?v=17"></script>
-<script src="app.js?v=17"></script>
-<script src="subs-view.js?v=17"></script>
+<script src="cloud.js?v=18"></script>
+<script src="pixora-summary.js?v=18"></script>
+<script src="pixora-usage.js?v=18"></script>
+<script src="subs.js?v=18"></script>
+<script src="app.js?v=18"></script>
+<script src="subs-view.js?v=18"></script>
 </body>
 </html>

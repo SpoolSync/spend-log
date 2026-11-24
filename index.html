@@ -465,6 +465,10 @@ dialog.qc .field{display:flex;flex-direction:column;gap:6px}
 .ptag.up{color:var(--impulse);background:color-mix(in srgb,var(--impulse) 12%,transparent)}
 .ptag.down{color:var(--need);background:color-mix(in srgb,var(--need) 14%,transparent)}
 .items .ln .ptag{margin-right:6px}
+/* reading progress */
+dialog.sheet.reading .sheethead::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:40% 100%;background-repeat:no-repeat;animation:readbar 1.2s linear infinite}
+@keyframes readbar{from{background-position:-40% 0}to{background-position:140% 0}}
+@media (prefers-reduced-motion:reduce){dialog.sheet.reading .sheethead::after{animation:none;background:var(--accent);opacity:.4}}
 /* chooser */
 #chooseDlg .form{padding-top:18px;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
 .choice{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper)}
@@ -692,11 +696,11 @@ dialog.qc .field{display:flex;flex-direction:column;gap:6px}
 <script src="firebase-app-compat.js"></script>
 <script src="firebase-auth-compat.js"></script>
 <script src="firebase-firestore-compat.js"></script>
-<script src="cloud.js?v=20"></script>
-<script src="pixora-summary.js?v=20"></script>
-<script src="pixora-usage.js?v=20"></script>
-<script src="subs.js?v=20"></script>
-<script src="app.js?v=20"></script>
-<script src="subs-view.js?v=20"></script>
+<script src="cloud.js?v=21"></script>
+<script src="pixora-summary.js?v=21"></script>
+<script src="pixora-usage.js?v=21"></script>
+<script src="subs.js?v=21"></script>
+<script src="app.js?v=21"></script>
+<script src="subs-view.js?v=21"></script>
 </body>
 </html>

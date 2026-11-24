@@ -7,7 +7,7 @@ addEventListener("message",async function(ev){
     if(!engine)engine=PPOCR.create(new URL(".",location.href).href);
     var ocr=await engine;url=URL.createObjectURL(ev.data.blob);
     var r=await ocr.detect(url);
-    parent.postMessage({kind:"read-done",id:id,boxes:r.texts.map(function(t){return {t:t.text,x:t.box[0][0],y:t.box[0][1]};})},location.origin);
+    parent.postMessage({kind:"read-done",id:id,boxes:r.texts.map(function(t){return {t:t.text,x:t.box[0][0],y:t.box[0][1],b:t.box.map(function(p){return [Math.round(p[0]),Math.round(p[1])];})};})},location.origin);
   }catch(e){
     engine=null;
     parent.postMessage({kind:"read-done",id:id,error:String((e&&e.message)||e)},location.origin);

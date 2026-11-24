@@ -190,12 +190,135 @@ async function sizeForReading(blob){
     return (await new Promise(function(res){c.toBlob(res,"image/jpeg",0.92);}))||blob;
   }catch(e){return blob;}
 }
+
+/* ---------- Getting the photo ready to read: find the paper, straighten it, crop the background ---------- */
+async function canvasBlob(c,q){return await new Promise(function(res){c.toBlob(res,"image/jpeg",q||0.92);});}
+function otsu(hist,total){var sum=0,i;for(i=0;i<256;i++)sum+=i*hist[i];var sB=0,wB=0,best=0,thr=128;
+  for(i=0;i<256;i++){wB+=hist[i];if(!wB)continue;var wF=total-wB;if(!wF)break;sB+=i*hist[i];var mB=sB/wB,mF=(sum-sB)/wF,v=wB*wF*(mB-mF)*(mB-mF);if(v>best){best=v;thr=i;}}
+  return thr;}
+/* Returns {rot (degrees to turn the photo), box in source pixels} or null when no clear receipt is found.
+   1) find the paper: the largest bright, low-colour patch; a patch running into the photo's edges is background, so look brighter inside it.
+   2) find the angle from the text itself: the turn at which ink lines up into the sharpest rows (upright or sideways, then fine-tuned). */
+function findPaper(bmp){
+  var S=420,k=Math.min(1,S/Math.max(bmp.width,bmp.height)),w=Math.max(8,Math.round(bmp.width*k)),hh=Math.max(8,Math.round(bmp.height*k));
+  var c=document.createElement("canvas");c.width=w;c.height=hh;var x=c.getContext("2d",{willReadFrequently:true});x.drawImage(bmp,0,0,w,hh);
+  var d=x.getImageData(0,0,w,hh).data,n=w*hh,L=new Uint8Array(n),Sa=new Uint8Array(n),i;
+  for(i=0;i<n;i++){var r=d[i*4],g=d[i*4+1],b=d[i*4+2];L[i]=(r*299+g*587+b*114)/1000|0;Sa[i]=Math.max(r,g,b)-Math.min(r,g,b);}
+  var lab=new Int32Array(n),q=new Int32Array(n),m=new Uint8Array(n),md=new Uint8Array(n),comp=null,bestScore=0;
+  function histOtsu(){var hist=new Array(256).fill(0);for(i=0;i<n;i++)hist[L[i]]++;return otsu(hist,n);}
+  var t0=Math.max(histOtsu(),100);
+  for(var thr=t0;thr<=246;thr+=8){
+    for(i=0;i<n;i++)m[i]=(L[i]>thr&&Sa[i]<75)?1:0;
+    // fill the gaps that text lines cut into the paper
+    for(i=0;i<n;i++){var px=i%w,py=(i/w)|0,v2=m[i];if(!v2)for(var dy=-2;dy<=2&&!v2;dy++)for(var dx=-2;dx<=2;dx++){var xx=px+dx,yy=py+dy;if(xx>=0&&xx<w&&yy>=0&&yy<hh&&m[yy*w+xx]){v2=1;break;}}md[i]=v2;}
+    lab.fill(0);var id=0;
+    for(i=0;i<n;i++){if(lab[i]||!md[i])continue;id++;var hd=0,tl=0,cnt=0,mx=w,my=hh,Mx=0,My=0,sum=0;q[tl++]=i;lab[i]=id;
+      while(hd<tl){var p=q[hd++];cnt++;sum+=L[p];var qx=p%w,qy=(p/w)|0;if(qx<mx)mx=qx;if(qx>Mx)Mx=qx;if(qy<my)my=qy;if(qy>My)My=qy;
+        if(qx>0&&md[p-1]&&!lab[p-1]){lab[p-1]=id;q[tl++]=p-1;}if(qx<w-1&&md[p+1]&&!lab[p+1]){lab[p+1]=id;q[tl++]=p+1;}
+        if(qy>0&&md[p-w]&&!lab[p-w]){lab[p-w]=id;q[tl++]=p-w;}if(qy<hh-1&&md[p+w]&&!lab[p+w]){lab[p+w]=id;q[tl++]=p+w;}}
+      var frac=cnt/n,edges=(mx<=1)+(my<=1)+(Mx>=w-2)+(My>=hh-2);
+      if(frac<0.015||frac>0.75||edges>1)continue;
+      // ink inside: dark, low-colour pixels within the patch
+      var avg=sum/cnt,inkN=0;for(var yy2=my;yy2<=My;yy2++)for(var xx2=mx;xx2<=Mx;xx2++){var pq=yy2*w+xx2;if(lab[pq]===id&&L[pq]<avg-40)inkN++;}
+      var ink=inkN/cnt;if(ink<0.008)continue;
+      var score=cnt*Math.min(ink,0.12);
+      if(score>bestScore){bestScore=score;comp={id:id,cnt:cnt,bb:[mx,my,Mx,My],lab:lab.slice()};}
+    }
+  }
+  if(!comp)return null;
+  lab=comp.lab;var frac2=comp.cnt/n;
+  var cid=comp.id,sx=0,sy=0,cnt2=0,mean=0;
+  for(i=0;i<n;i++)if(lab[i]===cid){sx+=i%w;sy+=(i/w)|0;cnt2++;mean+=L[i];}
+  var cx=sx/cnt2,cy=sy/cnt2;mean/=cnt2;
+  // ink: dark pixels inside the paper's bounding box, not background
+  var bb=comp.bb,ink=[];
+  for(var yy=bb[1];yy<=bb[3];yy++)for(var xx=bb[0];xx<=bb[2];xx++){var pp=yy*w+xx;if(L[pp]<mean-45&&Sa[pp]<90){var near=0;
+    for(var dy=-3;dy<=3&&!near;dy+=3)for(var dx=-3;dx<=3;dx+=3){var qq=(yy+dy)*w+xx+dx;if(qq>=0&&qq<n&&lab[qq]===cid){near=1;break;}}
+    if(near)ink.push(xx-cx,yy-cy);}}
+  function sharp(deg){var a=deg*Math.PI/180,ca=Math.cos(a),sa=Math.sin(a),bins={},s=0;
+    for(var t=0;t<ink.length;t+=2){var v=Math.round(ink[t]*sa+ink[t+1]*ca);bins[v]=(bins[v]||0)+1;}
+    for(var key in bins)s+=bins[key]*bins[key];return s;}
+  var rot=0;
+  if(ink.length>60){
+    var best=-1,bd=0,dd;
+    // upright or sideways: the paper's long side decides when it is clearly longer; otherwise sideways must win clearly
+    var m20=0,m02=0,m11=0;for(i=0;i<n;i++)if(lab[i]===cid){var ex=i%w-cx,ey=((i/w)|0)-cy;m20+=ex*ex;m02+=ey*ey;m11+=ex*ey;}
+    var elong=Math.sqrt(Math.pow(m20-m02,2)+4*m11*m11)/(m20+m02),major=Math.abs(0.5*Math.atan2(2*m11,m20-m02)*180/Math.PI);
+    function search(base){var b2=-1,d2=base;for(dd=-20;dd<=20;dd+=2){var sc=sharp(base+dd);if(sc>b2){b2=sc;d2=base+dd;}}return [b2,d2];}
+    var up=search(0),side=search(90),pick=elong>0.25?(major<45?side:up):(side[0]>up[0]*1.3?side:up);
+    best=pick[0];bd=pick[1];
+    for(dd=bd-2;dd<=bd+2;dd+=0.25){var sc2=sharp(dd);if(sc2>best){best=sc2;bd=dd;}}
+    rot=bd;if(Math.abs(rot)<0.5)rot=0;
+  }
+  var a=rot*Math.PI/180,ca=Math.cos(a),sa=Math.sin(a),x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for(i=0;i<n;i++)if(lab[i]===cid){var X=i%w-cx,Y=((i/w)|0)-cy,u=X*ca-Y*sa,v=X*sa+Y*ca;if(u<x0)x0=u;if(u>x1)x1=u;if(v<y0)y0=v;if(v>y1)y1=v;}
+  var pad=0.09*Math.max(x1-x0,y1-y0);
+  return {rot:rot,cx:cx/k,cy:cy/k,x0:(x0-pad)/k,y0:(y0-pad)/k,x1:(x1+pad)/k,y1:(y1+pad)/k,frac:frac2};
+}
+async function prepPhoto(blob){
+  var bmp=await createImageBitmap(blob),f=findPaper(bmp);
+  if(!f)return null;
+  var a=f.rot*Math.PI/180,bw=f.x1-f.x0,bh=f.y1-f.y0,uc=(f.x0+f.x1)/2,vc=(f.y0+f.y1)/2;
+  var s=Math.min(2.5,2000/Math.max(bw,bh)),c=document.createElement("canvas");c.width=Math.max(8,Math.round(bw*s));c.height=Math.max(8,Math.round(bh*s));
+  var x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,c.width,c.height);
+  x.translate(c.width/2,c.height/2);x.scale(s,s);x.translate(-uc,-vc);x.rotate(a);x.translate(-f.cx,-f.cy);x.drawImage(bmp,0,0);
+  return {blob:await canvasBlob(c),rot:f.rot};
+}
+async function turnBlob(blob,deg){
+  var bmp=await createImageBitmap(blob),c=document.createElement("canvas"),r=deg*Math.PI/180,ca=Math.abs(Math.cos(r)),sa=Math.abs(Math.sin(r));
+  c.width=Math.round(bmp.width*ca+bmp.height*sa);c.height=Math.round(bmp.width*sa+bmp.height*ca);
+  var x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,c.width,c.height);x.translate(c.width/2,c.height/2);x.rotate(r);x.drawImage(bmp,-bmp.width/2,-bmp.height/2);
+  return await canvasBlob(c);
+}
+/* How convincing a read is: prices found, a total, a date. */
+function readScore(out,boxes){
+  if(!out)return 0;
+  var pr=(boxes||[]).filter(function(b){return /\d[.,]\d{2}\b/.test(b.t||"");}).length;
+  return pr+(out.amount>0?6:0)+(out.date?4:0)+(out.time?1:0)+(out.where?4:0)+(out.verified?6:0)+Math.min((out.items||[]).length,10)*0.5-(sane(out)?0:10);
+}
+function itemsSum(o){return (o.items||[]).reduce(function(t,i){return t+Math.max(0,+i.cost||0);},0);}
+function sane(o){if(!o||!(o.amount>0))return false;var s=itemsSum(o);return !(s>0&&s>o.amount*1.05+0.01);}
+/* The slant of the reader's own text boxes, in degrees (long boxes only). */
+function boxAngle(boxes){
+  var v=[];(boxes||[]).forEach(function(b){if(!b.b)return;var p=b.b,wd=Math.hypot(p[1][0]-p[0][0],p[1][1]-p[0][1]),ht=Math.hypot(p[3][0]-p[0][0],p[3][1]-p[0][1]);if(wd>ht*3)v.push(Math.atan2(p[1][1]-p[0][1],p[1][0]-p[0][0])*180/Math.PI);});
+  if(v.length<4)return 0;v.sort(function(x,y){return x-y;});return v[v.length>>1];
+}
+async function ocrBoxes(blob){
+  var f=await reader();
+  return await new Promise(function(res,rej){var id=++readSeq;readJobs[id]={res:res,rej:rej};f.contentWindow.postMessage({kind:"read",id:id,blob:blob},location.origin);});
+}
+
+var readStep=null;
 async function readReceipt(blob){
-  var f=await reader(),small=await sizeForReading(blob);
-  var boxes=await new Promise(function(res,rej){var id=++readSeq;readJobs[id]={res:res,rej:rej};f.contentWindow.postMessage({kind:"read",id:id,blob:small},location.origin);});
-  var out=parseReceiptBoxes(boxes);
-  if(!out)throw {code:"image_rejected"};
-  return out;
+  var best=null,step=function(t){if(readStep)try{readStep(t);}catch(e){}};
+  async function attempt(b,label){
+    var boxes=await ocrBoxes(await sizeForReading(b)),out=parseReceiptBoxes(boxes),sc=readScore(out,boxes);
+    if(out)tries.push(out);
+    if(out&&(!best||sc>best.sc))best={out:out,sc:sc,how:label,boxes:boxes,src:b};
+    if(!lastWhole&&label==="whole")lastWhole={boxes:boxes,src:b};
+  }
+  var lastWhole=null,tries=[];
+  /* Fill what the best read missed from the other reads; card digits that match a saved card win. */
+  function finish(o){
+    tries.forEach(function(t){if(t===o||t.kind!==o.kind)return;
+      ["date","time","where","receipt_no"].forEach(function(k){if(!o[k]&&t[k])o[k]=t[k];});
+      if(t.last4&&(!o.last4||(!cardByLast4(o.last4)&&cardByLast4(t.last4))))o.last4=t.last4;});
+    return o;
+  }
+  function good(strict){var o=best&&best.out;if(!o||!(o.amount>0)||!sane(o))return false;if(o.kind==="card")return !!o.date;
+    if(strict)return !!(o.where&&o.date&&(o.verified||(o.items||[]).length));return !!((o.date||o.verified)&&best.sc>=12);}
+  step("Finding the receipt in the photo");
+  var prep=null;try{prep=await prepPhoto(blob);}catch(e){prep=null;}
+  step("Reading the text");
+  if(prep){await attempt(prep.blob,"straightened");if(good(true))return finish(best.out);step("Reading the whole photo too");}
+  await attempt(blob,"whole");
+  if(!good(true)&&lastWhole){var ang=boxAngle(lastWhole.boxes);if(Math.abs(ang)>1.2){step("Straightening the photo");await attempt(await turnBlob(blob,-ang),"turned by the text");}}
+  if(good())return finish(best.out);
+  if(prep){step("Trying it the other way up");await attempt(await turnBlob(prep.blob,180),"upside down");if(good())return finish(best.out);}
+  if(!best||best.sc<8){for(var deg of [90,270]){step("Trying it sideways");await attempt(await turnBlob(blob,deg),"turned "+deg);if(good())break;}
+    if(!good(true)&&best&&/^turned \d/.test(best.how)){var ang2=boxAngle(best.boxes);if(Math.abs(ang2)>1.2){step("Straightening the photo");await attempt(await turnBlob(best.src,-ang2),"turned and straightened");}}}
+  if(!best)throw {code:"image_rejected"};
+  return finish(best.out);
 }
 var STORES=[["costco","Costco"],["walmart","Walmart"],["best buy","Best Buy"],["canadian tire","Canadian Tire"],["home depot","Home Depot"],["ikea","IKEA"],["winners","Winners"],["marshalls","Marshalls"],["homesense","HomeSense"],["shoppers","Shoppers Drug Mart"],["sport chek","Sport Chek"],["staples","Staples"],["dollarama","Dollarama"],["no frills","No Frills"],["loblaws","Loblaws"],["freshco","FreshCo"],["sobeys","Sobeys"],["food basics","Food Basics"],["tim hortons","Tim Hortons"],["mcdonald","McDonald's"],["starbucks","Starbucks"],["lcbo","LCBO"],["petro-canada","Petro-Canada"],["metro","Metro"]];
 var PRICE_END=/\$?(\d{1,4}[.,]\d{2})\s*(-?)\s*[A-Z0-9 ]{0,5}$/;
@@ -247,6 +370,8 @@ function parseCardScreen(lines,text){
 function receiptDate(text){
   var m,t=today(),best=null;
   if((m=/(20\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(text)))return parseDate(m[1]+"-"+m[2]+"-"+m[3]);
+  if((m=/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(\d{1,2})(?:st|nd|rd|th)?,?\s*(20\d{2})(?!\d{2})/i.exec(text)))return monthDate(m[1],m[2],m[3]);
+  if((m=/\b(\d{1,2})\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s*(20\d{2})\b/i.exec(text)))return monthDate(m[2],m[1],m[3]);
   var re=/(?:^|[^\d\/])(\d{1,2})[\/\-.](\d{1,2})[\/\-.](20\d{2}|\d{2})(?![\d\/])/g;
   while((m=re.exec(text))){
     var y=m[3].length===2?"20"+m[3]:m[3];
@@ -260,8 +385,22 @@ function receiptDate(text){
 }
 function titleItem(s){return s.toLowerCase().replace(/\b[a-z]/g,function(c){return c.toUpperCase();}).replace(/\b(Gv|Ks|Pc|Kg|Ml|Lb|Xl|Tv|Usb)\b/g,function(w){return w.toUpperCase();});}
 function fixName(s){return s.replace(/\b0(?=[A-Z]{2})/g,"O").replace(/([A-Z])0(?=[A-Z])/g,"$1O").replace(/\s+/g," ").trim().slice(0,60);}
+function mergeRows(boxes){
+  var bs=(boxes||[]).filter(function(b){return b&&b.b&&b.b.length===4&&String(b.t||"").trim();});
+  if(bs.length<3||bs.length<(boxes||[]).length*0.8)return boxes;
+  var angs=[],hs=[];
+  bs.forEach(function(b){var p=b.b,wd=Math.hypot(p[1][0]-p[0][0],p[1][1]-p[0][1]),ht=Math.hypot(p[3][0]-p[0][0],p[3][1]-p[0][1]);hs.push(ht);if(wd>ht*2)angs.push(Math.atan2(p[1][1]-p[0][1],p[1][0]-p[0][0]));});
+  function med(v){v=v.slice().sort(function(x,y){return x-y;});return v.length?v[v.length>>1]:0;}
+  var ang=med(angs),ca=Math.cos(ang),sa=Math.sin(ang),mh=Math.max(4,med(hs));
+  var it=bs.map(function(b){var p=b.b,cx=(p[0][0]+p[1][0]+p[2][0]+p[3][0])/4,cy=(p[0][1]+p[1][1]+p[2][1]+p[3][1])/4;return {t:String(b.t),xr:cx*ca+cy*sa,yr:-cx*sa+cy*ca};})
+    .sort(function(x,y){return x.yr-y.yr;});
+  var rows=[];
+  it.forEach(function(b){var r=rows[rows.length-1];if(r&&Math.abs(b.yr-r.y)<mh*0.55){r.items.push(b);r.y=(r.y*(r.items.length-1)+b.yr)/r.items.length;}else rows.push({y:b.yr,items:[b]});});
+  return rows.map(function(r){return {t:r.items.sort(function(x,y){return x.xr-y.xr;}).map(function(b){return b.t;}).join(" "),y:r.y,x:0};});
+}
 function parseReceiptBoxes(boxes){
-  var lines=(boxes||[]).slice().sort(function(a,b){return a.y-b.y;}).map(function(b){return String(b.t||"").replace(/[：]/g,":").replace(/\s+/g," ").trim();}).filter(Boolean);
+  boxes=mergeRows(boxes);
+  var lines=(boxes||[]).slice().sort(function(a,b){return a.y-b.y;}).map(function(b){return String(b.t||"").replace(/[：]/g,":").replace(/[，]/g,",").replace(/\s+/g," ").trim();}).filter(Boolean);
   var text=lines.join("\n");
   if(text.replace(/[^A-Za-z0-9]/g,"").length<12)return null;
   /* last 4 card digits: masked with any mix of dots, stars or X's (a resized photo can turn one dot into a full stop) */
@@ -275,7 +414,7 @@ function parseReceiptBoxes(boxes){
     if(letters.length>=4&&letters.length>=lines[i].length*0.7){out.where=letters.toLowerCase().replace(/\b[a-z]/g,function(c){return c.toUpperCase();}).slice(0,40);break;}
   }
   out.date=receiptDate(text);out.last4=L4;
-  if((m=/(?:\d{2}\s+|\b)([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/.exec(text)))out.time=z(+m[1])+":"+m[2];
+  if((m=/(?:\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2},?\s*20\d{2}|20\d{2}[\/.-]\d{1,2}[\/.-]\d{2}|\d{1,2}[\/.-]\d{1,2}[\/.-](?:20)?\d{2})\s*([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*([ap])?\.?\s*(m\b)?/i.exec(text))||(m=/(?:\d{2}\s+|\b)([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*([ap])?\.?\s*(m\b)?/i.exec(text)))out.time=m[3]&&m[4]?ampm(m[1],m[2],m[3]):z(+m[1])+":"+m[2];
   /* items: names and prices are collected as two ordered columns, then paired by position.
      On a creased or tilted receipt a price often lands on the neighbouring line, but its order in the column holds. */
   var names=[],prices=[],end=lines.length;
@@ -297,10 +436,17 @@ function parseReceiptBoxes(boxes){
     }
     if(wn.length&&wn.length===wp.length)wn.forEach(function(n,k){out.items.push({id:wu.length===wn.length?wu[k]:"",name:n,cost:Math.round(wp[k]*100)/100});});
   }
+  var adjAt=[];function zipMode(){return false;}
   for(i=out.items.length?end:start;i<end;i++){
     var l=lines[i],pm=PRICE_END.exec(l),price=pm?Math.abs(parseAmount(pm[1]))*(pm[2]?-1:1):null,body=pm?l.slice(0,pm.index).trim():l;
     if(pm&&!body){prices.push(price);continue;}
+    if(pm&&/(?:^|\s)[-−]\s*\$?\d[\d.,]*\s*[A-Z]{0,2}$/.test(l))price=-Math.abs(price);
+    if(pm&&names.length&&/deposit|eco ?fee|env\w* fee|recycl|container|coupon|discount|instant sav|promo|\boff\b|savings/i.test(body)){
+      var lastN=names[names.length-1],adj=/coupon|discount|sav|promo|\boff\b/i.test(body)?-Math.abs(price):Math.abs(price);
+      if(zipMode()){prices.push(adj);adjAt.push(prices.length-1);}else lastN.own=(lastN.own||0)+adj;continue;}
     if(NOT_ITEM.test(l)||HEADER.test(l))continue;
+    var qm=/^(\d{1,2})\s*[xX]?\s+([A-Za-z].*)$/.exec(body);
+    if(qm&&pm){names.push({id:"",name:fixName(qm[2].replace(/\s*@\s*\$?\d[\d.,]*.*$/,"")+(+qm[1]>1?" ×"+qm[1]:"")),own:price});prices.push(price);continue;}
     var a=/^(\d{2,})\s*(\/?\s*.*)$/.exec(body),id="",name="";
     if(a){
       id=a[1];name=a[2].trim();
@@ -311,6 +457,7 @@ function parseReceiptBoxes(boxes){
     names.push({id:id.slice(0,24),name:fixName(name),own:price});
     if(pm)prices.push(price);
   }
+  if(adjAt.length){var folded=[];prices.forEach(function(p,k){if(adjAt.indexOf(k)>=0&&folded.length)folded[folded.length-1]+=p;else folded.push(p);});prices=folded;}
   var zip=prices.length>=names.length;
   if(names.length)names.forEach(function(n,k){var c=zip?prices[k]:n.own;out.items.push({id:n.id,name:n.name,cost:c==null||isNaN(c)?0:Math.round(c*100)/100});});
   var sum=Math.round(out.items.reduce(function(t,it){return t+it.cost;},0)*100)/100,sub=null,tax=null,amts=[],tot=null;
@@ -321,9 +468,25 @@ function parseReceiptBoxes(boxes){
     if(/\btotal\b/i.test(lines[i])&&!/items|number|sub/i.test(lines[i])&&v&&tot==null)tot=v;
   }
   var one=amts.filter(function(x,k){return amts.indexOf(x)===k;});
-  if(sub!=null)out.amount=Math.round((sub+(tax||0))*100)/100;
+  /* Prefer what was paid: "amount paid", then a total (with a tip added after it), then the card payment line. */
+  var paid=null,tots=[],tip=null,tipAt=-1,tender=null,cash=false;
+  for(i=0;i<lines.length;i++){
+    var qq=PRICE_END.exec(lines[i]),vv=qq?Math.abs(parseAmount(qq[1])):null,ll=lines[i];
+    if(!vv)continue;
+    if(/amount\s*paid|total\s*paid|grand\s*total|balance\s*due|total\s*due|amount\s*due|total\s*charged|total\s*amount|purchase\s*total/i.test(ll))paid=vv;
+    else if(/\btotal\b/i.test(ll)&&!/sub|items?|number|sav|points|\btax|hst|gst|before|discount|qty/i.test(ll))tots.push({v:vv,at:i});
+    else if(/\b(tip|gratuity)\b/i.test(ll)){tip=vv;tipAt=i;}
+    else if(/\b(visa|master\s?card|amex|american express|debit|interac|credit|tend|mc|flexiti)\b/i.test(ll)&&!/change|points|money earned/i.test(ll)&&tender==null)tender=vv;
+    else if(/^\s*cash\b/i.test(ll))cash=true;
+  }
+  var tt=tots.length?tots[0]:null;
+  if(paid!=null)out.amount=paid;
+  else if(tt&&tip!=null&&tipAt>tt.at){var later=tots.filter(function(x){return x.at>tipAt;});out.amount=later.length?later[0].v:Math.round((tt.v+tip)*100)/100;}
+  else if(tt&&sub!=null&&tt.v<sub-0.005&&tender)out.amount=tender;
+  else if(tt)out.amount=tt.v;
+  else if(tender&&!cash)out.amount=tender;
+  else if(sub!=null)out.amount=Math.round((sub+(tax||0))*100)/100;
   else if(one.length===1)out.amount=one[0];
-  else if(tot!=null)out.amount=tot;
   else if(sum>0)out.amount=sum;
   out.verified=out.items.length>0&&((sub!=null&&Math.abs(sum-sub)<0.011)||(sub==null&&out.amount!=null&&sum>0&&sum<=out.amount+0.001&&sum>=out.amount*0.85));
   if((m=/\bTC#?\s*((?:\d[\d ]{14,30}\d))/.exec(text)))out.receipt_no=m[1].replace(/\s+/g,"");
@@ -765,6 +928,8 @@ $("f-read").addEventListener("click",async function(){
   var btn=this,note=$("f-receiptNote");btn.disabled=true;btn.textContent="Reading the receipt…";
   readCtl=new AbortController();
   try{
+    readStep=function(t){if($("entryDlg").open&&$("entryDlg").classList.contains("reading"))$("entryTitle").textContent=t+"…"+batchTag();};
+    $("entryDlg").classList.add("reading");
     var r=await sample.json('The image is a store receipt or a bill. Reply with only one JSON object with these keys: "where" (store or company name), "what" (what was bought, at most 6 words), "amount" (total paid, a number), "date" ("YYYY-MM-DD" or null), "category" (one of: '+CATS.map(function(c){return c[0];}).join(", ")+'), "pay" (one of: '+PAYS.join(", ")+', or null). Use null for anything you cannot read. Example: {"where":"Metro","what":"Weekly groceries","amount":84.12,"date":"2026-11-14","category":"groceries","pay":"Debit"}',{images:[pendingBlob],modelTier:"quick",signal:readCtl.signal});
     if(r&&typeof r==="object"){
       if(r.where)$("f-where").value=String(r.where).slice(0,80);
@@ -790,6 +955,7 @@ $("f-read").addEventListener("click",async function(){
     else if(c==="image_rejected")note.textContent="That photo couldn't be read. Try a clearer one.";
     else note.textContent="Couldn't read that receipt. Type the details in, or try again.";
   }
+  readStep=null;$("entryDlg").classList.remove("reading");
   btn.disabled=false;btn.textContent="Read this receipt on the phone";
   if(autoScan){
     autoScan=false;
@@ -2602,7 +2768,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v20",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v21",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

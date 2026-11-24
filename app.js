@@ -360,7 +360,7 @@ function textToItems(text){
 function render(){
   $("todayLabel").textContent=new Date().toLocaleDateString("en-CA",{weekday:"long",month:"long",day:"numeric"});
   var st=$("saveStatus");
-  paintCloud();
+  paintCloud();PIDX=null;
   var home=S.tab==="home",slot=$("pxslot");slot.textContent="";
   var pc=pxCard();if(pc)slot.append(pc);slot.hidden=!pc;
   $("checkin").hidden=!home;$("tape").hidden=!home;
@@ -481,8 +481,9 @@ function entryRow(e,ctx){
 function itemsBlock(e){
   if(!Array.isArray(e.items)||!e.items.length)return null;
   var d=h("details",{class:"items",open:!!(S.q&&S.q.trim())},h("summary",{text:e.items.length+(e.items.length===1?" item":" items")+" on the receipt"}));
+  var idx=PIDX||(PIDX=priceIndex());
   e.items.forEach(function(it,k){var c=+it.cost||0;
-    d.append(h("div",{class:"ln mono small"},h("span",{class:"k",text:(it.id?it.id+"  ":"")+(it.name||"Item")+(it.cat?"  ·  "+CATNAME[it.cat]:"")}),h("span",{class:"lead"}),h("span",{text:(c<0?"−":"")+money(Math.abs(c))}),retBtn(e,it,k)));});
+    d.append(h("div",{class:"ln mono small"},h("span",{class:"k",text:(it.id?it.id+"  ":"")+(it.name||"Item")+(it.cat?"  ·  "+CATNAME[it.cat]:"")}),h("span",{class:"lead"}),priceTag(priceChange(idx,it,e.date,e.id)),h("span",{text:(c<0?"−":"")+money(Math.abs(c))}),retBtn(e,it,k)));});
   return d;
 }
 
@@ -502,7 +503,7 @@ function renderView(){
   var v=$("view");v.textContent="";
   if(S.tab!==lastTab){lastTab=S.tab;T("tab_"+S.tab);}
   if(SUBOF[S.tab])v.append(backBtn());
-  if(S.tab==="cards")viewCards(v);else if(S.tab==="home")viewHome(v);else if(S.tab==="more")viewMore(v);else if(S.tab==="budgets")viewBudgets(v);else if(S.tab==="log")viewLog(v);else if(S.tab==="inbox")viewInbox(v);else if(S.tab==="bills")viewBills(v);else if(S.tab==="returns")viewReturns(v);else if(S.tab==="import")viewImport(v);else if(S.tab==="subs")viewSubs(v);else if(S.tab==="warranty")viewWarranty(v);else viewSettings(v);
+  if(S.tab==="report")viewReport(v);else if(S.tab==="cards")viewCards(v);else if(S.tab==="home")viewHome(v);else if(S.tab==="more")viewMore(v);else if(S.tab==="budgets")viewBudgets(v);else if(S.tab==="log")viewLog(v);else if(S.tab==="inbox")viewInbox(v);else if(S.tab==="bills")viewBills(v);else if(S.tab==="returns")viewReturns(v);else if(S.tab==="import")viewImport(v);else if(S.tab==="subs")viewSubs(v);else if(S.tab==="warranty")viewWarranty(v);else viewSettings(v);
 }
 
 function viewLog(v){
@@ -515,13 +516,17 @@ function viewLog(v){
 function fillLog(v){
   var q=(S.q||"").trim().toLowerCase();
   var list=q?S.entries.filter(function(e){return matches(e,q);}):S.entries.filter(function(e){return ym(e.date||"")===S.month;});
+  var all=list;list=list.filter(passF);
   if(!q){var isNow=S.month===ym(today());v.append(h("div",{class:"monthbar"},
     h("button",{type:"button",class:"mnav","aria-label":"Previous month",text:"‹",onclick:function(){S.month=shiftMonth(S.month,-1);render();}}),
     h("h2",{text:monthLabel(S.month)}),
     h("button",{type:"button",class:"mnav","aria-label":"Next month",text:"›",disabled:isNow,onclick:function(){S.month=shiftMonth(S.month,1);render();}})));
-    if(list.length)v.append(h("p",{class:"monthsum",text:list.length+(list.length===1?" purchase · ":" purchases · ")+money(sum(list))}));
+    if(all.length)v.append(filterBar(all));
+    if(list.length){v.append(h("p",{class:"monthsum",text:list.length+(list.length===1?" purchase · ":" purchases · ")+money(sum(list))+(anyF()?" (filtered)":"")}));
+      if(!anyF())v.append(h("button",{type:"button",class:"linkbtn center",text:"See where it went ›",onclick:function(){goReport(S.month,"log");}}));}
+    else if(anyF()){v.append(h("div",{class:"emptystate"},h("p",{class:"ttl",text:"Nothing in "+monthLabel(S.month)+" matches these filters"}),h("button",{type:"button",class:"btn quiet sm",text:"Clear filters",onclick:function(){S.f={};render();}})));return;}
     else{v.append(h("div",{class:"emptystate"},h("p",{class:"ttl",text:isNow?"Nothing logged this month yet":"Nothing logged in "+monthLabel(S.month)}),h("p",{class:"small muted",text:"Tap + to scan a receipt or type a purchase in."})));return;}}
-  else v.append(h("h2",{text:list.length+(list.length===1?" match":" matches")+" across all months"}));
+  else{v.append(h("h2",{text:list.length+(list.length===1?" match":" matches")+" across all months"}));if(all.length)v.append(filterBar(all));}
   if(!list.length){v.append(h("p",{class:"empty",text:q?"Nothing matches that search.":S.ready?"No purchases logged for this month yet. Use “Log a purchase” above, or bring in a bank export under Bank import.":"Loading your purchases…"}));return;}
   var cur=null;
   list.forEach(function(e){
@@ -887,7 +892,7 @@ fillSelect($("f-pay"),PAYS.map(function(p){return [p,p];}),"Choose");
 var pendingBlob2=null;
 function daysLeft(s){return Math.round((fromIso(s)-fromIso(today()))/86400000);}
 function matches(e,q){
-  var hay=[e.what,e.where,e.note,e.bankDesc,CATNAME[e.category],e.receipt&&e.receipt.no,e.date].concat((e.items||[]).map(function(i){return (i.id||"")+" "+(i.name||"");})).join(" ").toLowerCase();
+  var hay=[e.what,e.where,e.note,e.bankDesc,CATNAME[e.category],e.receipt&&e.receipt.no,e.date,e.cardId?cardLabel(cardById(e.cardId)):""].concat((e.items||[]).map(function(i){return (i.id||"")+" "+(i.name||"");})).join(" ").toLowerCase();
   return q.split(/\s+/).every(function(w){return hay.indexOf(w)>=0;});
 }
 function viewReturns(v){
@@ -1976,7 +1981,7 @@ function billsDueSoon(){
 function openReturns(){return S.entries.filter(function(e){return e.returnBy&&daysLeft(e.returnBy)>=0&&daysLeft(e.returnBy)<=7&&!fullyReturned(e);});}
 function renderNav(){
   var nb=$("navbar");if(!nb)return;nb.hidden=!S.ready;
-  var cur=SUBOF[S.tab]?"more":S.tab;
+  var cur=S.tab==="report"?(SUBOF[S.repFrom]?"more":S.repFrom||"home"):SUBOF[S.tab]?"more":S.tab;
   nb.querySelectorAll("[data-nav]").forEach(function(b){var t=b.dataset.nav;if(t==="add")return;if(t===cur)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current");});
   setBadge("returns",openReturns().length);
   setBadge("more",S.entries.filter(function(e){return e.needsDetails;}).length+billsDueSoon().length);
@@ -1991,13 +1996,14 @@ function viewMore(v){
   var need=S.entries.filter(function(e){return e.needsDetails;}).length,soon=billsDueSoon().length,nb=Object.keys(S.budgets||{}).length;
   var rows=[["bills","Bills",S.bills.length?(soon?soon+(soon===1?" bill due soon":" bills due soon"):S.bills.length+(S.bills.length===1?" monthly bill":" monthly bills")):"Rent, phone, insurance, subscriptions",soon],
     ["budgets","Budgets",nb?nb+(nb===1?" category has":" categories have")+" a monthly limit":"Set a monthly limit per category",0],
+    ["report","Monthly report","Where your money went, by category, place and card",0],
     ["cards","Your cards",(S.cards||[]).length?(S.cards||[]).map(cardLabel).slice(0,3).join(", "):"Name your cards to see which one you used",0],
     ["inbox","Needs details",need?need+(need===1?" bank row to describe":" bank rows to describe"):"Nothing waiting",need],
     subMoreRow(),warrantyMoreRow(),
     ["import","Bank import","Bring in a CSV from online banking",0],
     ["settings","Account & backup",cuser?(cuser.email||"Signed in"):"Not signed in · this phone only",0]];
   var list=h("div",{class:"mlist"});
-  rows.forEach(function(r){list.append(h("button",{type:"button",class:"mrow",onclick:function(){go(r[0]);}},
+  rows.forEach(function(r){list.append(h("button",{type:"button",class:"mrow",onclick:function(){if(r[0]==="report")goReport(ym(today()),"more");else go(r[0]);}},
     h("span",{class:"mtx"},h("span",{class:"mt",text:r[1]}),h("span",{class:"ms",text:r[2]})),
     r[3]?h("b",{class:"mbadge",text:String(r[3])}):null,h("span",{class:"chev","aria-hidden":"true",text:"›"})));});
   v.append(list);
@@ -2092,7 +2098,7 @@ function insights(){
 }
 function insightCard(){
   var l=insights();if(!l.length)return null;
-  var c=card("This month");var ul=h("ul",{class:"ins"});l.forEach(function(x){ul.append(h("li",{text:x}));});c.append(ul);return c;
+  var c=card("This month",function(){goReport(ym(today()),"home");},"Full report");var ul=h("ul",{class:"ins"});l.forEach(function(x){ul.append(h("li",{text:x}));});c.append(ul);return c;
 }
 function startCard(){
   if(flagGet("sl_start_done"))return null;
@@ -2167,7 +2173,7 @@ function svgI(d,cls){
   var p=document.createElementNS("http://www.w3.org/2000/svg","path");p.setAttribute("d",d);s.appendChild(p);return s;
 }
 function catIcon(c){var k=CATICON[c]?c:"unsorted";var b=h("span",{class:"cic cat-"+k});b.appendChild(svgI(CATICON[k]));return b;}
-var PAGETITLE={cards:"Your cards",home:"Tally",log:"Purchases",returns:"Returns",more:"More",bills:"Bills",budgets:"Budgets",inbox:"Needs details",import:"Bank import",settings:"Account",subs:"Subscriptions",warranty:"Warranties"};
+var PAGETITLE={report:"Report",cards:"Your cards",home:"Tally",log:"Purchases",returns:"Returns",more:"More",bills:"Bills",budgets:"Budgets",inbox:"Needs details",import:"Bank import",settings:"Account",subs:"Subscriptions",warranty:"Warranties"};
 function paintTitle(){var t=$("pageTitle");if(t)t.textContent=PAGETITLE[S.tab]||"Tally";$("todayLabel").hidden=S.tab!=="home";}
 
 /* Category and payment pickers mirror the hidden selects, so every place that sets select.value keeps working. */
@@ -2226,6 +2232,7 @@ function heroCard(){
   if(st.length){var left=st.reduce(function(t,b){return t+(b.limit-b.spent);},0);
     bits.append(h("span",{class:"hpill "+(left<0?"up":"")},left<0?money(-left)+" over your budgets":money(left)+" left in your budgets"));}
   if(bits.childNodes.length)box.append(bits);
+  if(spent>0)box.append(h("button",{type:"button",class:"hlink",onclick:function(){goReport(m,"home");}},"See where it went ›"));
   return box;
 }
 
@@ -2372,6 +2379,155 @@ function viewCards(v){
   v.append(h("div",{class:"btnrow"},h("button",{type:"button",class:"btn primary",text:"Add a card",onclick:function(){openCard(null);}})));
 }
 
+var PIDX=null;
+
+/* ---------- Filters on Purchases ---------- */
+S.f=S.f||{};
+var WHYS3=[["need","Need"],["want","Want"],["impulse","Impulse"]];
+function passF(e){
+  var f=S.f||{};
+  if(f.cat&&e.category!==f.cat&&!(e.items||[]).some(function(i){return i.cat===f.cat;}))return false;
+  if(f.why&&e.why!==f.why)return false;
+  if(f.where&&(e.where||e.what||"").trim().toLowerCase()!==f.where)return false;
+  if(f.card){if(f.card==="none"?!!e.cardId:e.cardId!==f.card)return false;}
+  return true;
+}
+function anyF(){var f=S.f||{};return !!(f.cat||f.why||f.where||f.card);}
+function filterBar(list){
+  var f=S.f||{},bar=h("div",{class:"fbar",role:"group","aria-label":"Filter purchases"});
+  function sel(label,key,opts){
+    var s=h("select",{class:"fsel"+(f[key]?" on":""),"aria-label":"Filter by "+label.toLowerCase()});
+    s.append(h("option",{value:"",text:label}));
+    opts.forEach(function(o){var op=h("option",{value:o[0],text:o[1]});if(f[key]===o[0])op.selected=true;s.append(op);});
+    s.addEventListener("change",function(){S.f[key]=s.value;T("filter_"+key);render();});
+    return s;
+  }
+  var cats={};list.forEach(function(e){if(e.category)cats[e.category]=1;(e.items||[]).forEach(function(i){if(i.cat)cats[i.cat]=1;});});if(f.cat)cats[f.cat]=1;
+  bar.append(sel("Category","cat",CATS.filter(function(c){return cats[c[0]];}).map(function(c){return [c[0],c[1]];})));
+  bar.append(sel("Need / want","why",WHYS3));
+  if((S.cards||[]).length)bar.append(sel("Card","card",(S.cards||[]).map(function(c){return [c.id,cardLabel(c)];}).concat([["none","No card picked"]])));
+  if(f.where)bar.append(h("button",{type:"button",class:"fchip on",onclick:function(){S.f.where="";render();}},"At "+f.whereLabel+" ✕"));
+  if(anyF())bar.append(h("button",{type:"button",class:"fclear",text:"Clear",onclick:function(){S.f={};T("filter_clear");render();}}));
+  return bar;
+}
+
+/* ---------- Price watch: the same item (by item ID / UPC) compared with the last time you bought it ---------- */
+function priceIndex(){
+  var idx={};
+  S.entries.forEach(function(e){(e.items||[]).forEach(function(it){
+    var id=String(it.id||"").replace(/\D/g,"");if(id.length<5||!(+it.cost>0))return;
+    (idx[id]=idx[id]||[]).push({date:e.date||"",cost:+it.cost,eid:e.id,where:e.where||"",name:it.name||""});
+  });});
+  Object.keys(idx).forEach(function(k){idx[k].sort(function(a,b){return a.date<b.date?-1:a.date>b.date?1:0;});});
+  return idx;
+}
+function priceChange(idx,it,date,eid){
+  var id=String(it.id||"").replace(/\D/g,"");if(id.length<5||!(+it.cost>0)||!idx[id])return null;
+  var prev=null;idx[id].forEach(function(r){if(r.eid!==eid&&r.date<=date&&(r.date<date||!eid))prev=r;});
+  if(!prev)return null;
+  var diff=Math.round((+it.cost-prev.cost)*100)/100,pct=diff/prev.cost*100;
+  if(Math.abs(diff)<0.10||Math.abs(pct)<3)return {same:true,prev:prev,diff:0,pct:0};
+  return {prev:prev,diff:diff,pct:pct};
+}
+function priceTag(ch){
+  if(!ch||ch.same)return null;
+  return h("span",{class:"ptag "+(ch.diff>0?"up":"down"),title:"Was "+money(ch.prev.cost)+" on "+dayLabel(ch.prev.date),text:(ch.diff>0?"▲ ":"▼ ")+money(Math.abs(ch.diff))});
+}
+function scanPriceSummary(items,date){
+  var idx=priceIndex(),up=[],down=[];
+  items.forEach(function(it){var ch=priceChange(idx,it,date,null);if(ch&&!ch.same)(ch.diff>0?up:down).push({it:it,ch:ch});});
+  return {up:up.sort(function(a,b){return b.ch.diff-a.ch.diff;}),down:down};
+}
+
+/* ---------- Monthly report ---------- */
+function goReport(m,from){S.repMonth=m||ym(today());S.repFrom=from||S.tab;T("report_open");go("report");}
+function goFiltered(m,f){S.month=m;S.q="";S.f=Object.assign({},f);T("report_tap");go("log");}
+function bars(rows,opts){
+  var box=h("div",{class:"rlist"}),max=Math.max.apply(null,rows.map(function(r){return r.v;}).concat([1]));
+  rows.forEach(function(r){
+    box.append(h("button",{type:"button",class:"rrow",onclick:r.go,"aria-label":r.label+": "+money(r.v)+(r.sub?", "+r.sub:"")+". Show these purchases."},
+      r.icon||null,
+      h("span",{class:"rtx"},
+        h("span",{class:"rtop"},h("span",{class:"rname",text:r.label}),h("span",{class:"ramt",text:money(r.v)})),
+        h("span",{class:"rbar"},h("i",{class:r.cls||"",style:"width:"+Math.max(2,r.v/max*100).toFixed(1)+"%"})),
+        r.sub?h("span",{class:"rsub "+(r.subCls||""),text:r.sub}):null),
+      h("span",{class:"chev","aria-hidden":"true",text:"›"})));
+  });
+  return box;
+}
+function section(title,note){var s=h("section",{class:"card rsec"},h("div",{class:"cardhead"},h("h3",{text:title})));if(note)s.append(h("p",{class:"small muted",text:note}));return s;}
+function viewReport(v){
+  var m=S.repMonth||ym(today()),lm=shiftMonth(m,-1),isNow=m===ym(today());
+  var back=h("button",{type:"button",class:"back",onclick:function(){go(S.repFrom&&S.repFrom!=="report"?S.repFrom:"home");}},h("span",{"aria-hidden":"true",text:"‹ "}),"Back");
+  v.append(back,h("div",{class:"monthbar"},
+    h("button",{type:"button",class:"mnav","aria-label":"Previous month",text:"‹",onclick:function(){S.repMonth=shiftMonth(m,-1);render();}}),
+    h("h2",{text:monthLabel(m)}),
+    h("button",{type:"button",class:"mnav","aria-label":"Next month",text:"›",disabled:isNow,onclick:function(){S.repMonth=shiftMonth(m,1);render();}})));
+  var cur=S.entries.filter(function(e){return !e.needsDetails&&ym(e.date||"")===m;});
+  var dom=isNow?new Date().getDate():31;
+  var prevSame=S.entries.filter(function(e){return !e.needsDetails&&ym(e.date||"")===lm&&+(e.date||"").slice(8,10)<=dom;});
+  var total=sum(cur),ptotal=sum(prevSame);
+  if(!cur.length){v.append(h("div",{class:"emptystate"},h("p",{class:"ttl",text:"Nothing logged in "+monthLabel(m)}),h("p",{class:"small muted",text:"The report fills in as you log purchases."})));return;}
+  // headline
+  var hero=h("div",{class:"hero rhero"},h("p",{class:"hlabel",text:isNow?"Spent so far":"Spent in "+monthLabel(m).split(" ")[0]}),h("p",{class:"hamt",text:money(total)}));
+  var bits=h("div",{class:"hbits"});
+  bits.append(h("span",{class:"hpill",text:cur.length+(cur.length===1?" purchase":" purchases")}));
+  if(ptotal>0&&Math.abs(total-ptotal)>=1){var more=total>ptotal;bits.append(h("span",{class:"hpill "+(more?"up":"down")},svgI(more?ICON.up:ICON.down),money(Math.abs(total-ptotal))+(more?" more":" less")+" than "+(isNow?"this point in ":"")+monthLabel(lm).split(" ")[0]));}
+  var days=isNow?dom:new Date(+m.slice(0,4),+m.slice(5,7),0).getDate();
+  bits.append(h("span",{class:"hpill",text:money(total/days)+" a day"}));
+  hero.append(bits);v.append(hero);
+  // categories
+  var by=spendByCat(cur),pby=spendByCat(prevSame);
+  var cs=section("By category","Mixed receipts are split by item, so a Costco run can count in more than one category.");
+  cs.append(bars(Object.keys(by).filter(function(k){return by[k]>0.004;}).sort(function(a,b){return by[b]-by[a];}).map(function(k){
+    var d=by[k]-(pby[k]||0),share=Math.round(by[k]/total*100);
+    return {label:CATNAME[k]||"No category",v:by[k],icon:catIcon(k),cls:"cat-"+(CATICON[k]?k:"unsorted"),
+      sub:share+"% of the month"+(pby[k]>0&&Math.abs(d)>=1?" · "+(d>0?"▲ ":"▼ ")+money(Math.abs(d))+" vs "+monthLabel(lm).split(" ")[0]:!pby[k]&&ptotal>0?" · new this month":""),
+      subCls:d>0&&pby[k]>0&&Math.abs(d)>=1?"up":"",go:function(){goFiltered(m,{cat:k});}};
+  })));
+  v.append(cs);
+  // need / want / impulse
+  var w={need:0,want:0,impulse:0,none:0};cur.forEach(function(e){w[e.why&&w[e.why]!=null?e.why:"none"]+=net(e);});
+  var ws=section("Need, want or impulse");
+  var stack=h("div",{class:"stack",role:"img","aria-label":WHYS3.map(function(x){return x[1]+" "+money(w[x[0]]);}).join(", ")+(w.none>0?", not marked "+money(w.none):"")});
+  [["need","Need"],["want","Want"],["impulse","Impulse"],["none","Not marked"]].forEach(function(x){if(w[x[0]]>0)stack.append(h("i",{class:"w-"+x[0],style:"width:"+(w[x[0]]/total*100).toFixed(1)+"%"}));});
+  ws.append(stack);
+  var leg=h("div",{class:"wlegend"});
+  [["need","Need"],["want","Want"],["impulse","Impulse"],["none","Not marked"]].forEach(function(x){if(w[x[0]]<=0)return;
+    leg.append(h("button",{type:"button",class:"lg",disabled:x[0]==="none",onclick:function(){goFiltered(m,{why:x[0]});}},h("i",{class:"w-"+x[0],"aria-hidden":"true"}),h("span",{text:x[1]}),h("span",{class:"lamt",text:money(w[x[0]])})));});
+  ws.append(leg);
+  if(w.impulse>0)ws.append(h("p",{class:"small muted",text:"Impulse buys were "+Math.round(w.impulse/total*100)+"% of the month."}));
+  v.append(ws);
+  // stores
+  var st={};cur.forEach(function(e){var k=(e.where||e.what||"Unknown").trim(),key=k.toLowerCase();st[key]=st[key]||{label:k,v:0,n:0};st[key].v+=net(e);st[key].n++;});
+  var tops=Object.keys(st).map(function(k){return Object.assign({key:k},st[k]);}).sort(function(a,b){return b.v-a.v;}).slice(0,6);
+  var ss=section("Top places");
+  ss.append(bars(tops.map(function(s){return {label:s.label,v:s.v,sub:s.n+(s.n===1?" visit":" visits"),go:function(){goFiltered(m,{where:s.key,whereLabel:s.label});}};})));
+  v.append(ss);
+  // cards / payment
+  var pay={};cur.forEach(function(e){var c=e.cardId&&cardById(e.cardId),k=c?"c:"+c.id:"p:"+(e.pay||"Not set");pay[k]=pay[k]||{label:c?cardLabel(c):(e.pay||"Not set"),v:0,card:c?c.id:null};pay[k].v+=net(e);});
+  var pk=Object.keys(pay).sort(function(a,b){return pay[b].v-pay[a].v;});
+  if(pk.length>1||(S.cards||[]).length){
+    var ps=section("How you paid");
+    ps.append(bars(pk.map(function(k){var p=pay[k];return {label:p.label,v:p.v,cls:"pay",go:p.card?function(){goFiltered(m,{card:p.card});}:function(){goFiltered(m,{});}};})));
+    v.append(ps);
+  }
+  // biggest
+  var big=cur.slice().sort(function(a,b){return net(b)-net(a);}).slice(0,3),bs=section("Biggest purchases");
+  big.forEach(function(e){bs.append(entryRow(e));});v.append(bs);
+  // price watch
+  var idx=priceIndex(),rises=[];
+  cur.forEach(function(e){(e.items||[]).forEach(function(it){var ch=priceChange(idx,it,e.date,e.id);if(ch&&!ch.same&&ch.diff>0)rises.push({e:e,it:it,ch:ch});});});
+  if(rises.length){
+    rises.sort(function(a,b){return b.ch.diff-a.ch.diff;});
+    var pw=section("Price watch","Items that cost more than the last time you bought them, matched by the item number on the receipt.");
+    rises.slice(0,6).forEach(function(r){pw.append(h("button",{type:"button",class:"prow",onclick:function(){openEntry(r.e);}},
+      h("span",{class:"rtx"},h("span",{class:"rname",text:titleItem(r.it.name||"Item")}),h("span",{class:"rsub",text:r.e.where+" · was "+money(r.ch.prev.cost)+" on "+dayLabel(r.ch.prev.date)})),
+      h("span",{class:"pnow"},h("b",{text:money(+r.it.cost)}),h("span",{class:"ptag up",text:"▲ "+money(r.ch.diff)+" ("+Math.round(r.ch.pct)+"%)"}))));});
+    v.append(pw);
+  }
+}
+
 buildPickers();
 
 /* ---------- Quick check after a scan: store, date and total at a glance ---------- */
@@ -2401,6 +2557,9 @@ function quickCheck(r){
     var sumI=Math.round(items.reduce(function(t,i){return t+(+i.cost||0);},0)*100)/100;
     box.append(line("Items",items.length+(items.length===1?" item":" items"),r&&r.verified?"Prices add up to the receipt total.":"Prices don't add up to the total ("+money(sumI)+"). Worth a look.",!(r&&r.verified),"f-items"));
   }
+  if(items.length){var ps=scanPriceSummary(items,date);
+    if(ps.up.length)box.append(line("Prices",ps.up.length+(ps.up.length===1?" item costs":" items cost")+" more than last time",ps.up.slice(0,2).map(function(x){return titleItem(x.it.name||"Item")+" "+money(+x.it.cost)+", was "+money(x.ch.prev.cost);}).join(" · "),true,"f-items"));
+    else if(ps.down.length)box.append(line("Prices",ps.down.length+(ps.down.length===1?" item is":" items are")+" cheaper than last time",ps.down.slice(0,2).map(function(x){return titleItem(x.it.name||"Item")+" "+money(+x.it.cost)+", was "+money(x.ch.prev.cost);}).join(" · "),false,"f-items"));}
   var qcc=cardById($("f-card").value);
   if(qcc)box.append(line("Paid with",cardLabel(qcc),r&&r.last4&&qcc.last4===r.last4?"Picked from the last 4 digits.":"",false,"f-pay"));
   else if(r&&r.last4)box.append(h("button",{type:"button",class:"qcl",onclick:function(){T("card_add_from_scan");dlg.close();openCard(null,r.last4,function(c){$("f-card").value=c.id;$("f-pay").value=payOf(c);quickCheck(r);});},"aria-label":"Card ending "+r.last4+". Not in your cards yet. Tap to name it."},
@@ -2443,7 +2602,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v19",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v20",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

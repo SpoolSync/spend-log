@@ -35,6 +35,10 @@ Live: https://spoolsync.github.io/spend-log/
 - Cloud data lives at `apps/spendlog/users/<uid>` in Firestore. The security rules are kept in the SpoolSync/pixora repo; always publish that full rule set, never one app's section alone.
 - Receipt reading runs on the phone (PaddleOCR models with ONNX Runtime): `ppocr.js`, `pp-*.onnx`, `ort-wasm-*`.
 
+## Testing
+
+See `dev/README.md`: one command runs every test suite against private Firebase emulators, an audit robot checks every screen on small and large iPhones in light and dark mode, and a scorer measures the receipt scanner.
+
 ## Renamed from Spend Log
 
 Phones that installed Spend Log keep working and update by themselves. The home-screen label only changes if the icon is removed and added again from Safari.

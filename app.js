@@ -1629,7 +1629,7 @@ function paintCloud(){
   var st=$("saveStatus");if(!st)return;
   var full=!cuser?"On this phone only. Sign in to back up":cloudState==="synced"?"Synced to your Pixora account":cloudState==="syncing"?"Syncing…":cloudState==="offline"?"Offline. Changes sync when you're back online":cloudState==="conflict"?"Your account needs your other passcode":cloudState==="error"?"Sync paused":"Connecting to your account…";
   var txt=!cuser?"This phone only":cloudState==="synced"?"Synced":cloudState==="syncing"?"Syncing":cloudState==="offline"?"Offline":cloudState==="conflict"?"Action needed":cloudState==="error"?"Sync paused":"Connecting";
-  st.textContent="";st.append(h("i",{class:"sdot","aria-hidden":"true"}),txt);st.setAttribute("aria-label",full+". Open account settings.");st.title=full;
+  st.textContent="";st.append(h("i",{class:"sdot","aria-hidden":"true"}),h("span",{class:"stxt",text:txt}));st.setAttribute("aria-label",full+". Open account settings.");st.title=full;
   st.className="status "+((cloudState==="conflict"||cloudState==="error")?"warn":!cuser?"local":cloudState==="synced"?"ok":"busy");
 }
 function stampMissing(){
@@ -2768,7 +2768,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v21",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v22",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

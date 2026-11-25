@@ -1469,10 +1469,12 @@ async function eraseEverything(){
   DEK=null;S.entries=[];S.bills=[];S.days={};S.tomb={};S.seen={};S.daysTs=0;S.budgets={};S.budgetsTs=0;S.cards=[];S.cardsTs=0;S.ready=false;
   try{await wipeAll();}catch(e){}
   pxNeed=null;cloudConflict=null;vaultKind="legacy";
-  if(cuser)await routeSignedIn();else showAccount();
+  if(cuser)await routeSignedIn(true);else showAccount();
 }
 
 function showLock(mode,problem,src){
+  if(window.PixoraPin){var lp=$("l-pass"),lc=$("l-confirm");if(mode==="pxset"||mode==="setup"){PixoraPin.fit(lp,null,true);PixoraPin.fit(lc,null,true);}
+    else if(mode==="pxunlock")kvGet("mk").then(function(mk){PixoraPin.fit(lp,mk,false);}).catch(function(){});else{PixoraPin.fit(lp,null,false);PixoraPin.fit(lc,null,false);}}
   lockMode=mode;eraseArmed=false;pxArm=false;$("acct").hidden=true;
   if(mode!=="pxset"&&mode!=="pxunlock")pxCtx=null;
   if(src&&src.startOver)pxCtx=Object.assign({},pxCtx||{},{startOver:true,fromCloud:true});
@@ -1524,7 +1526,7 @@ $("lockForm").addEventListener("submit",async function(ev){
   }
   try{
     if(lockMode==="setup"){
-      if(pass.length<4)return fail("Use at least 4 characters.");
+      if(!/^\d{4}$/.test(pass))return fail("Use exactly 4 digits.");
       if(pass!==$("l-confirm").value)return fail("The two passcodes don't match.");
       await createVault(pass);
     }else{
@@ -1532,6 +1534,7 @@ $("lockForm").addEventListener("submit",async function(ev){
       if(Date.now()<f.until)return fail("Too many wrong tries. Wait "+Math.ceil((f.until-Date.now())/1000)+" seconds.");
       try{await openVault(pass);}
       catch(e){
+        try{if(!cuser)await cloudInit();if(cuser&&window.PixoraPin){var pmk=await getMk();if(pmk){await PixoraPin.unwrap(pass,pmk);return fail("That's your Pixora passcode. Tally on this phone still uses the passcode it had before Pixora. Enter that old one once and Tally moves to your Pixora passcode.");}}}catch(x){}
         f.n++;if(f.n>=5)f.until=Date.now()+Math.min(900,30*Math.pow(2,f.n-5))*1000;
         await kvSet("fails",f);
         return fail(f.n>=5?"Wrong passcode. Wait "+Math.ceil((f.until-Date.now())/1000)+" seconds before trying again.":"Wrong passcode.");
@@ -1557,7 +1560,8 @@ function enterApp(){
   S.ready=true;S.tab="home";S.month=ym(today());
   $("lock").hidden=true;$("acct").hidden=true;$("app").hidden=false;
   render();
-  cloudInit().then(function(){paintCloud();if(cuser)cloudStart();});
+  cloudInit().then(function(){paintCloud();if(cuser)cloudStart();
+    if(cuser&&vaultKind==="pixora"&&window.PixoraPin){var lp=lastPass;lastPass="";PixoraPin.check({fdb:fdb,uid:cuser.uid,cur:lp,onDone:function(n){kvSet("mk",n).catch(function(){});toast("Your Pixora passcode is now 4 digits, for every app.");}});}});
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
 }
 $("l-erase").addEventListener("click",async function(){
@@ -1876,11 +1880,15 @@ function showAccount(problem){
   box.append(h("button",{type:"button",class:"btn quiet",style:"align-self:flex-start",text:"Use on this phone only, without an account",onclick:function(){$("acct").hidden=true;showLock("setup");}}));
   if(problem){box.prepend(h("p",{class:"err",role:"alert",text:problem}));}
 }
-async function routeSignedIn(){
+async function routeSignedIn(noShared){
   var raw=null,mk=null;
   try{var snap=await userDoc().get();raw=snap.exists&&snap.data().vid?snap.data():null;mk=await getMk();}
   catch(e){showAccount("Couldn't reach your Pixora account. Check the connection and sign in again.");return;}
   if(raw&&!raw.pk){var cm=metaFromCloud(raw);delete cm.ph;await kvSet("meta",cm);vaultKind="legacy";showLock("unlock",null,"cloud");return;}
+  // Already unlocked in another Pixora app in this browser: open without asking for the passcode.
+  if(mk&&window.PixoraPin&&!noShared){try{var sak=await PixoraPin.recall(mk.id,"spendlog"),cpk=raw&&raw.pk?pkFromCloud(raw.pk):null;
+    if(sak&&(!cpk||cpk.mid===mk.id)){await kvSet("mk",mk);if(cpk)await pxJoinCloud(sak,raw);else await pxCreateVault(sak,mk.id);
+      T("unlock_shared");pxCtx=null;await rememberKey();enterApp();return;}}catch(e){}}
   pxCtx={mk:mk,raw:raw,fromCloud:true};
   showLock(mk?"pxunlock":"pxset",null,"cloud");
 }
@@ -1948,16 +1956,17 @@ async function pxMaster(pass,mk){
 async function pxWrapMaster(pass,m,id){
   var salt=rnd(16),iv=rnd(12),k=await kek(pass,salt,PX_ITER);
   var ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv:iv},k,new TextEncoder().encode(JSON.stringify({m:b64(m)}))));
-  return {v:1,id:id,salt:b64(salt),iter:PX_ITER,iv:b64(iv),ct:b64(ct)};
+  var out={v:1,id:id,salt:b64(salt),iter:PX_ITER,iv:b64(iv),ct:b64(ct)};if(/^\d{4}$/.test(pass))out.fmt="pin4";return out;
 }
 /* A new Pixora passcode for all Pixora apps. Apps that can't open their cloud copy with it ask once and re-lock. */
 async function pxNewMaster(pass){
   var m=rnd(32),id=b64(rnd(9)).replace(/[+/=]/g,""),mk=await pxWrapMaster(pass,m,id);
   await masterDoc().set({mk:mk},{merge:true});
+  if(window.PixoraPin)await PixoraPin.remember(m,id);
   var ak=await pxAppKey(m);m.fill(0);await kvSet("mk",mk);T("px_passcode_set");
   return {mk:mk,ak:ak};
 }
-async function pxEnter(pass,mk){var m=await pxMaster(pass,mk),ak=await pxAppKey(m);m.fill(0);await kvSet("mk",mk);return ak;}
+async function pxEnter(pass,mk){var m=await pxMaster(pass,mk);if(window.PixoraPin)await PixoraPin.remember(m,mk.id);var ak=await pxAppKey(m);m.fill(0);await kvSet("mk",mk);return ak;}
 async function pkNew(ak,mid){
   var raw=rnd(32),iv=rnd(12),ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv:iv},ak,raw));
   var key=await importDek(raw);raw.fill(0);return {key:key,pk:{mid:mid,iv:iv,ct:ct}};
@@ -2097,21 +2106,22 @@ function pxPassPanel(){
   var msg=h("p",{class:"err",role:"alert",hidden:true});
   var change=h("button",{type:"button",class:"btn",text:"Change Pixora passcode",onclick:async function(){
     var cur=$("s-cur").value,nw=$("s-new").value,cf=$("s-conf").value;
-    var bad=nw.length<4?"Use at least 4 characters. Six or more is much harder to guess.":nw!==cf?"The two new passcodes don't match.":!cuser?"Sign in to your Pixora account first.":"";
+    var bad=!/^\d{4}$/.test(nw)?"The new passcode must be exactly 4 digits.":nw!==cf?"The two new passcodes don't match.":!cuser?"Sign in to your Pixora account first.":"";
     if(bad){msg.textContent=bad;msg.hidden=false;return;}
     change.disabled=true;change.textContent="Changing…";
     try{await pxChangePass(cur,nw);toast("Pixora passcode changed for all your Pixora apps.");render();}
     catch(e){msg.textContent=e&&e.code==="wrong"?"The current Pixora passcode is wrong.":"Couldn't reach your account. Check the connection and try again.";msg.hidden=false;change.disabled=false;change.textContent="Change Pixora passcode";}
   }});
   return h("div",{class:"panel"},h("h3",{text:"Pixora passcode"}),
-    h("p",{class:"small muted",text:"One passcode for Tally and your other Pixora apps. Changing it here changes it everywhere. Phones that are already unlocked stay unlocked."}),
+    h("p",{class:"small muted",text:"4 digits, one passcode for Tally and your other Pixora apps. Changing it here changes it everywhere. Phones that are already unlocked stay unlocked."}),
     pwField("s-cur","Current Pixora passcode","current-password"),pwField("s-new","New Pixora passcode","new-password"),pwField("s-conf","Repeat new passcode","new-password"),msg,h("div",{class:"btnrow"},change));
 }
 /* Lock screen when the Pixora passcode is the key. */
+var lastPass="";
 async function pxLockSubmit(pass,pass2){
   var ctx=pxCtx||{};
   if(lockMode==="pxset"){
-    if(pass.length<4)throw {msg:"Use at least 4 characters."};
+    if(!/^\d{4}$/.test(pass))throw {msg:"Use exactly 4 digits."};
     if(pass!==pass2)throw {msg:"The two passcodes don't match."};
     if(ctx.startOver||(ctx.raw&&ctx.raw.pk)){try{await cloudWipe();}catch(e){throw {msg:"Couldn't reach your account. Check the connection and try again."};}try{await wipeAll();}catch(e){}}
     var r;try{r=await pxNewMaster(pass);}catch(e){throw {msg:"Couldn't reach your account. Check the connection and try again."};}
@@ -2119,7 +2129,15 @@ async function pxLockSubmit(pass,pass2){
   }
   var mk=ctx.mk||await kvGet("mk"),ak;
   if(!mk)throw {msg:"This phone needs the internet once to check your Pixora passcode."};
-  try{ak=await pxEnter(pass,mk);}catch(e){throw {wrong:true};}
+  try{ak=await pxEnter(pass,mk);}catch(e){
+    var fresh=null;try{if(!cuser)await cloudInit();if(cuser)fresh=await getMk();}catch(x){}
+    if(!fresh||(fresh.id===mk.id&&fresh.ct===mk.ct))throw {wrong:true};
+    try{ak=await pxEnter(pass,fresh);}catch(x){throw {wrong:true};}
+    var lpk=ctx.fromCloud?null:await kvGet("pk");
+    if(lpk&&lpk.mid&&lpk.mid!==fresh.id){await kvSet("mk",mk);throw {msg:"Your Pixora passcode was reset in another Pixora app after Tally was set up on this phone. Enter your previous passcode once here; Tally then moves its data to the new one."};}
+    mk=fresh;
+  }
+  lastPass=pass;
   if(ctx.fromCloud){
     if(ctx.raw&&ctx.raw.pk){
       var cpk=pkFromCloud(ctx.raw.pk);
@@ -2759,7 +2777,12 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
       if(saved){try{await openWithKey(saved);enterApp();}catch(e){DEK=null;saved=null;kvSet("dek",null).catch(function(){});}}
     }
     if(!saved){
-      if(meta){if(vaultKind==="pixora")cloudInit().catch(function(){});showLock(vaultKind==="pixora"?"pxunlock":"unlock");}
+      if(meta&&vaultKind==="pixora"&&keepOn&&window.PixoraPin){
+        try{var lmk=await kvGet("mk"),lpk=await kvGet("pk"),sak=lmk&&lpk?await PixoraPin.recall(lmk.id,"spendlog"):null;
+          if(sak&&lpk.mid===lmk.id){await openWithKey(await pkOpen(sak,lpk));await rememberKey();T("unlock_shared");enterApp();saved=true;}}catch(e){DEK=null;}
+      }
+      if(saved){}
+      else if(meta){if(vaultKind==="pixora")cloudInit().catch(function(){});showLock(vaultKind==="pixora"?"pxunlock":"unlock");}
       else{var u0=await cloudInit();if(u0)await routeSignedIn();else showAccount();}
     }
   }
@@ -2768,7 +2791,7 @@ $("saveStatus").addEventListener("click",function(){if(S.ready){go("settings");}
 })();
 /* Count which kinds of saves happen: new purchase vs edit, bills, returns, no-spend days. */
 (function(){
-  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v22",function(){return fdb&&cuser?fdb:null;});
+  if(window.PixoraUsage)PixoraUsage.init("spendlog","spendlog-v23",function(){return fdb&&cuser?fdb:null;});
   var wrap=function(name,pick){var f=store[name];store[name]=function(x){try{T(pick?pick.apply(null,arguments):"store_"+name);}catch(e){}return f.apply(store,arguments);};};
   wrap("saveEntry",function(e){
     if(e.needsDetails&&!e.id)return "bank_row_saved";

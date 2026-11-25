@@ -1,6 +1,6 @@
 /* Tally: keeps the app's own files on the phone so it opens offline. No user data passes through here. */
-var CACHE="spendlog-v22";
-var SHELL=["./","index.html","app.js","subs.js","subs-view.js","cloud.js","pixora-summary.js","pixora-usage.js","firebase-app-compat.js","firebase-auth-compat.js","firebase-firestore-compat.js","ocr.html","ocr-frame.js","manifest.webmanifest","icon-180.png","icon-192.png","icon-512.png"];
+var CACHE="spendlog-v23";
+var SHELL=["./","index.html","app.js","pixora-pin.js","subs.js","subs-view.js","cloud.js","pixora-summary.js","pixora-usage.js","firebase-app-compat.js","firebase-auth-compat.js","firebase-firestore-compat.js","ocr.html","ocr-frame.js","manifest.webmanifest","icon-180.png","icon-192.png","icon-512.png"];
 var BIG=/ppocr\.js|ort-wasm|pp-det|pp-rec|pp-keys/;
 self.addEventListener("install",function(e){e.waitUntil(caches.open(CACHE).then(function(c){return c.addAll(SHELL.map(function(u){return new Request(u,{cache:"reload"});}));}).then(function(){return self.skipWaiting();}));});
 self.addEventListener("activate",function(e){e.waitUntil(caches.keys().then(function(ks){return Promise.all(ks.filter(function(k){return k.indexOf("spendlog-")===0&&k!==CACHE;}).map(function(k){return caches.delete(k);}));}).then(function(){return self.clients.claim();}));});
